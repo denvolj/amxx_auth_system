@@ -6,6 +6,7 @@
 #define _authorization_database_interface_included
 
 #include <auth_core>
+#include <sqlx> 
 
 /*=============================== Структуры базы данных ====================================*/
 enum _:SQLD

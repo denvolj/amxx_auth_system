@@ -21,7 +21,6 @@
 #pragma semicolon 1;
 
 #include <amxmodx>
-#include <sqlx> 
 #include <auth_core>
 #include <auth/database/mysql>
 
