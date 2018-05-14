@@ -23,6 +23,7 @@
 #include <amxmodx>
 #include <sqlx> 
 #include <auth_core>
+#include <auth/database/mysql>
 
 
 /*===================================== Блок констант ======================================*/
@@ -44,12 +45,11 @@ new sault_cache[CACHE_LENGTH] = "LAKFaksldfjoIU(*#@UEDJIO";
 public plugin_init() {
 	register_plugin(PLUG_OBJNAME, PLUG_VERSION, PLUG_CREATOR);
 	
-	fwd_check = CreateMultiForward("auth_check", ET_IGNORE, FP_CELL);
+	fwd_check = CreateMultiForward("auth_check", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL, FP_CELL);
 	fwd_status_change = CreateMultiForward("auth_status_change", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL, FP_CELL);
 	
 	cache_string(sault_cache, sault_cache);           // Покупаем соль...
-	
-	test_case();
+	database_init();
 }
 
 public plugin_natives() {
@@ -66,24 +66,7 @@ public plugin_natives() {
 	register_native("auth_force_logout","native__forcelogout", true);
 }
 
-test_case() {
-        new test_user[UserStruct] = { 1, "Dummy", "BOT", "127.0.0.1", "PASSCACHE", AFAIL_BAN, AFLAG_NICK, AUTH_SUCCESS, 1};
-        dump_userinfo(test_user, "Control data");
-        
-        auth_adduser(.data = test_user);
-        dump_userinfo(players_cache[0], "AddUser");
-        
-        test_user[us_user_id] = 111;
-        auth_usermod(0, .data = test_user);
-        dump_userinfo(players_cache[0], "ModUser");
-        
-        auth_getuser(.data = test_user);
-        dump_userinfo(test_user, "GetUser");
-        
-        auth_deluser(0);
-        dump_userinfo(players_cache[0], "DelUser");
-}
-
+/*
 database_create_user(data[UserStruct]) {
         players_cache[0] = data;
 }
@@ -99,7 +82,7 @@ database_modify_user(user_id, data[UserStruct]) {
 database_delete_user(user_id) {
         new user[UserStruct] = user_proto_default;
         players_cache[user_id] = user;
-}
+}*/
 
 /*===================================== Нативы плагина =====================================*/
 public AuthStatus:native__status(p_id) {
@@ -122,11 +105,15 @@ public native__adduser(user_id,
         if(strcmp(username, " ") == 1) data[us_nickname] = username;
         if(strcmp(steam, " ") == 1) data[us_steam] = steam;
         if(strcmp(ip, " ") == 1) data[us_ip] = ip;
-        if(strcmp(password, " ") == 1) data[us_password] = password;
+        if(strcmp(password, " ") == 1) {
+                data[us_password] = password;
+        }
         if(user_id > 0) data[us_user_id] = user_id;
         if(authfail != AFAIL_NULL) data[us_authfail] = _:authfail;
         if(authflags != AFLAG_NULL) data[us_authflags] = _:authflags;
         if(accessflags != -1) data[us_accessflags] = accessflags;
+        
+        cache_string(data[us_password], sault_cache);
         
         database_create_user(data);
 }
@@ -156,11 +143,15 @@ public native__usermod(user_id,
         if(strcmp(username, " ") == 1) data[us_nickname] = username;
         if(strcmp(steam, " ") == 1) data[us_steam] = steam;
         if(strcmp(ip, " ") == 1) data[us_ip] = ip;
-        if(strcmp(password, " ") == 1) data[us_password] = password;
+        if(strcmp(password, " ") == 1) {
+                data[us_password] = password;
+        }
         if(user_id > 0) data[us_user_id] = user_id;
         if(authfail != AFAIL_NULL) data[us_authfail] = _:authfail;
         if(authflags != AFLAG_NULL) data[us_authflags] = _:authflags;
         if(accessflags != -1) data[us_accessflags] = accessflags;
+        
+        cache_string(data[us_password], sault_cache);
         
         database_modify_user(user_id, data);
 }
@@ -180,11 +171,15 @@ public native__set_playerinfo(p_id,
         if(strcmp(username, " ") == 1) data[us_nickname] = username;
         if(strcmp(steam, " ") == 1) data[us_steam] = steam;
         if(strcmp(ip, " ") == 1) data[us_ip] = ip;
-        if(strcmp(password, " ") == 1) data[us_password] = password;
+        if(strcmp(password, " ") == 1) {
+                data[us_password] = password;
+        }
         if(data[us_user_id] > 0) players_cache[p_id][us_user_id] = data[us_user_id];
         if(authfail != AFAIL_NULL) data[us_authfail] = _:authfail;
         if(authflags != AFLAG_NULL) data[us_authflags] = _:authflags;
         if(accessflags != -1) data[us_accessflags] = accessflags;
+        
+        cache_string(data[us_password], sault_cache);
         
         players_cache[p_id] = data;
 }
@@ -206,11 +201,11 @@ public native__forcelogout(p_id) {
 
 /*========================================= События ========================================*/
 public client_putinserver(p_id) {
-	authorize_client(p_id);
+	    authorize_client(p_id);
 }
 
 public client_disconnected(p_id) {
-	unauthorize_client(p_id);
+	    unauthorize_client(p_id);
 }
 
 /*================================== Процедуры авторизации =================================*/
@@ -218,18 +213,17 @@ public client_disconnected(p_id) {
 parse_client_data(p_id) {
         new user[UserStruct] = user_proto_default;
         players_cache[p_id] = user;
-        if(auth_flag & AFLAG_NICK) get_user_name(p_id, players_cache[p_id][us_nickname], NICK_LENGTH);
-	if(auth_flag & AFLAG_STEAM) get_user_authid(p_id, players_cache[p_id][us_steam], STEAM_LENGTH);
-	if(auth_flag & AFLAG_IP) get_user_ip(p_id, players_cache[p_id][us_ip], IP_LENGTH);
-	if(auth_flag & AFLAG_PASS) get_user_info(p_id, pass_key, players_cache[p_id][us_password], CACHE_LENGTH);
-	cache_passwd(p_id);
-	players_cache[p_id][us_authstatus] = _:AUTH_EMPTY;
+        get_user_name(p_id, players_cache[p_id][us_nickname], NICK_LENGTH); 
+        get_user_authid(p_id, players_cache[p_id][us_steam], STEAM_LENGTH);
+        get_user_ip(p_id, players_cache[p_id][us_ip], IP_LENGTH, true);
+        get_user_info(p_id, pass_key, players_cache[p_id][us_password], CACHE_LENGTH);
+        
+        cache_passwd(p_id);
+        players_cache[p_id][us_authstatus] = _:AUTH_EMPTY;
 }
 
 authorize_client(p_id, skip_reg = false) {
         static user[UserStruct]; 
-        new bool: auth_success = true;
-        static res;
         
         if(!is_user_connected(p_id)) 
                 return;
@@ -237,40 +231,49 @@ authorize_client(p_id, skip_reg = false) {
         parse_client_data(p_id);        // Получаем данные игрока
         user = players_cache[p_id];     // Дублируем данные
         
+        new info[2]; info[0] = p_id; info[1] = skip_reg;
+        server_print("[AuthSystem] Searcing user");
+        
         // Идентификация
-	auth_getuser(.data = user);       // Получаем данные пользователя в БД
-	
-	// Регистрация (пользователь не найден в БД)
-	if(user[us_user_id] == 0 && !skip_reg) {
-	        change_status(p_id, AUTH_NOT_REGISTERED);
-	        
-	        if(res == AUTH_CONTINUE) {
-	                database_create_user(user);
-	                authorize_client(p_id, true);
+        identify_mask(user, auth_flag);
+        database_find_user(.data = user, .threaded = true, .callback = "database_identify", .extras = info, .size = 2);       // Получаем данные пользователя в БД
+}
+
+// процесс идентификации клиента, вызывается при асинхронном запросе
+identify_client(p_id, user[UserStruct], skip_reg) {
+        server_print("[AuthSystem] Indentify...");
+        new bool: auth_success = true;
+        static res;
+        // Регистрация (пользователь не найден в БД)
+        if(user[us_user_id] == 0 && !skip_reg) {
+                server_print("[AuthSystem] Registering...");
+                if(change_status(p_id, AUTH_NOT_REGISTERED) == AUTH_CONTINUE) {
+                        database_create_user(players_cache[p_id]);
+                        authorize_client(p_id, true);
                 } 
-	} else {
-	
-	        // Аутентификация
-	        if(user[us_authflags] & AFLAG_NICK){
-	                if(strcmp(players_cache[p_id][us_nickname], user[us_nickname])!=0)
-	                        auth_success = false;
+        } else {
+
+                // Аутентификация
+                if(user[us_authflags] & AFLAG_NICK){
+                        if(strcmp(players_cache[p_id][us_nickname], user[us_nickname])!=0)
+                                auth_success = false;
                 } else 
-	        if(user[us_authflags] & AFLAG_STEAM) {
-	                if(strcmp(players_cache[p_id][us_steam], user[us_steam])!=0)
-	                        auth_success = false;
+                if(user[us_authflags] & AFLAG_STEAM) {
+                        if(strcmp(players_cache[p_id][us_steam], user[us_steam])!=0)
+                                auth_success = false;
                 } else
-	        if(user[us_authflags] & AFLAG_IP) {
-	                if(strcmp(players_cache[p_id][us_ip], user[us_ip])!=0)
-	                        auth_success = false;
+                if(user[us_authflags] & AFLAG_IP) {
+                        if(strcmp(players_cache[p_id][us_ip], user[us_ip])!=0)
+                                auth_success = false;
                 } else
-	        if(user[us_authflags] & AFLAG_PASS) {
-	                if(strcmp(players_cache[p_id][us_password], user[us_password])!=0)
-	                        auth_success = false;
+                if(user[us_authflags] & AFLAG_PASS) {
+                        if(strcmp(players_cache[p_id][us_password], user[us_password])!=0)
+                                auth_success = false;
                 }
                 else {
-	                ExecuteForward(fwd_check, res, p_id);
-	                if(res == AUTH_SUPERCEDE)
-	                        auth_success = false;
+                        ExecuteForward(fwd_check, res, p_id, AUTH_SUCCESS, players_cache[p_id][us_authstatus], players_cache[p_id][us_user_id]);
+                        if(res == AUTH_SUPERCEDE)
+                                auth_success = false;
                 }
         }
 
@@ -286,11 +289,11 @@ authorize_client(p_id, skip_reg = false) {
 
 unauthorize_client(p_id) {
         new user[UserStruct] = user_proto_default;
-        
-        players_cache[p_id] = user;
-	if(is_user_connected(p_id)) change_status(p_id, AUTH_FAIL);
 
-	change_status(p_id, AUTH_EMPTY);
+        players_cache[p_id] = user;
+        if(is_user_connected(p_id)) change_status(p_id, AUTH_FAIL);
+
+        change_status(p_id, AUTH_EMPTY);
 }
 
 cache_passwd(p_id) {
@@ -320,7 +323,7 @@ change_status(p_id, AuthStatus:status) {
 /*================================== Прочие методы плагина =================================*/
 
 // Спецзаказ: выдержанная в соли кешированная строка
-cache_string(text[CACHE_LENGTH], const sault[CACHE_LENGTH]) {
+cache_string(text[], const sault[]) {
         static string[CACHE_LENGTH]; copy(string, CACHE_LENGTH-1, text);
         static buffer[CACHE_LENGTH+2]; 
         formatex(buffer, CACHE_LENGTH+2, "%s%s", text, sault);
@@ -328,7 +331,7 @@ cache_string(text[CACHE_LENGTH], const sault[CACHE_LENGTH]) {
         
         hash_string(buffer, Hash_Sha3_256, cached_string, CACHE_LENGTH-1);
         
-        text = cached_string;
+        copy(text, CACHE_LENGTH-1, cached_string);
 }
 
 stock dump_userinfo(data[UserStruct], message[] = "") {
@@ -342,4 +345,17 @@ stock dump_userinfo(data[UserStruct], message[] = "") {
         server_print("> authflags:   %d", data[us_authflags]);
         server_print("> authstatus:  %d", data[us_authstatus]);
         server_print("> accessflags: %d", data[us_accessflags]);
+}
+
+identify_mask(user[UserStruct], AuthFlags:auth_mask) {
+        static defaults[UserStruct] = user_proto_default;
+        
+        if(auth_mask & ~AFLAG_NICK) 
+                copy(user[us_nickname], NICK_LENGTH, defaults[us_nickname]);
+        if(auth_mask & ~AFLAG_STEAM) 
+                copy(user[us_steam], STEAM_LENGTH, defaults[us_steam]);
+        if(auth_mask & ~AFLAG_IP) 
+                copy(user[us_ip], IP_LENGTH, defaults[us_ip]);
+        if(auth_mask & ~AFLAG_PASS) 
+                copy(user[us_password], CACHE_LENGTH, defaults[us_password]);
 }

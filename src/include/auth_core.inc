@@ -6,21 +6,23 @@
 
 // Блок констант
 #define NICK_LENGTH 32
-#define STEAM_LENGTH 24
-#define IP_LENGTH 16
-#define CACHE_LENGTH 65
+#define STEAM_LENGTH 32
+#define IP_LENGTH 20
+#define CACHE_LENGTH 70
+
+#define user_proto { 0, " ", " ", " ", " ", AFAIL_NULL, AFLAG_NULL, AUTH_NULL, -1}
+#define user_proto_default { 0, " ", " ", " ", " ", AFAIL_NULL, AFLAG_NULL, AUTH_EMPTY, 0}
 
 
 // Результат работы форварда - для определения дальнейшей обработки события
-enum
-{
+enum {
         AUTH_CONTINUE = 0,
         AUTH_SUPERCEDE
 };
 
 // Статус авторизации игрока
 enum AuthStatus {
-        AUTH_NULL = 0,
+        AUTH_NULL = 0,                  // Значение не задано
         AUTH_NOT_REGISTERED = 1,        // Пользователь не зарегистрирован
         AUTH_SUCCESS,                   // Пользователь авторизован
         AUTH_FAIL,                      // Пользователь не авторизован
@@ -29,7 +31,7 @@ enum AuthStatus {
 
 // Флаги авторизации (по каким полям проверять авторизацию пользователя)
 enum AuthFlags (<<=1) {
-        AFLAG_NULL = 0,
+        AFLAG_NULL = 0,    // Значение не задано
         AFLAG_NICK = 1,    // По нику (a)
         AFLAG_STEAM,       // SteamID (b)
         AFLAG_IP,          // IP адресу (c)
@@ -57,8 +59,6 @@ enum UserStruct {
         AuthStatus:us_authstatus,       // Статус авторизации
         us_accessflags                  // Права доступа игрока
 } 
-#define user_proto { 0, " ", " ", " ", " ", AFAIL_NULL, AFLAG_NULL, AUTH_NULL, -1}
-#define user_proto_default { 0, " ", " ", " ", " ", AFAIL_NULL, AFLAG_NULL, AUTH_EMPTY, 0}
 
 
 /**
@@ -161,4 +161,22 @@ forward auth_check(player_id, new_status, old_status, user_id);
 * @param user_id - номер зарегистрированного пользователя (0 - если пользователь не был авторизован)
 */
 forward auth_status_change(player_id, new_status, old_status, user_id);
+
+stock auth_equal(const data[UserStruct], UserStruct:field, comparewith[UserStruct] = user_proto_default)
+{
+        switch(field)
+        {
+                case us_nickname, us_steam, us_password, us_ip:
+                        return (strcmp(data[field], comparewith[field])==0);
+                case us_user_id, us_authfail, us_authflags, us_authstatus, us_accessflags:
+                        return (data[field] == comparewith[field]);
+                
+                default:
+                {
+                        server_print("[stock AuthCore::auth_equal] Non-struct offsets used in comparison. Returning false.");
+                        return false;
+                }
+        }
+        return false;
+}
 
