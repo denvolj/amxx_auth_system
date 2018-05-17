@@ -5,17 +5,13 @@
 	---------------------------------
 	
 	Система регистрации и авторизации.
-	Описание:
-		Плагин реализовывает базовые функции регистрации и авторизации по никнейму.
-	Настройки плагина гибкие, пользователь может сам выбрать по каким параметрам производить
-	аутентификацию. На данный момент это STEAMID, IP, PASSWORD.
-	
-	Реализованные фичи:
-	 - Автоматическое создание таблицы при регистрации плагина
-	 - Авторизация/регистрация
-	 - Гибкий API плагина, позволяющий производить основные операции с пользователями
-	 - Меню плагина, позволяющее выбрать параметры аутентификации
-	
+	ToDo: 
+	 - Возможность последовательного и параллельного обращения к БД
+	 - Возможность работы с несколькими записями БД (результат оборачивать в array)
+	 - Параллельное обращение реализовывать через последний строковый аргумент.
+	   При отсутствии оного - использовать последовательную обработку.
+	 - Для действий с отсутствующими пользователями (например регистрация пользователя, 
+	   которого нет на сервере) использовать "виртуального" игрока с индексом 0.
 ============================================================================================*/
 
 #pragma semicolon 1;
@@ -26,191 +22,290 @@
 
 
 /*===================================== Блок констант ======================================*/
-#define PLUG_OBJNAME			"AuthCore"
-#define PLUG_VERSION			"1.0.0"
+#define PLUG_OBJNAME			"AuthSystemCore"
+#define PLUG_VERSION			"1.1.0"
 #define PLUG_CREATOR			"Boec[SpecOPs]"
 
 
 /*==================================== Блок переменных =====================================*/
-new fwd_check, fwd_status_change;
-new players_cache[33][UserStruct];
+new fwd_check, fwd_status_change;               // Форварды
+new players_cache[33][UserStruct];              // Кеш пользователей
 
-new AuthFlags:auth_flag = AFLAG_NICK;
-new pass_key[5] = "_pw";
-new sault_cache[CACHE_LENGTH] = "LAKFaksldfjoIU(*#@UEDJIO";
+new retry_timer_offset = 0xFEAC2421;
+new auth_flag;                                  // Флаг идентификации
+new pass_key[5] = "_pw";                        // Поле пароля из user info
+new sault_cache[CACHE_LENGTH];                  // Соль безопасности для хеширования
+
+new cvar_authflag, cvar_sault;
 
 /*================== Первичная инициализация и завершение работы плагина ===================*/
 
 public plugin_init() {
 	register_plugin(PLUG_OBJNAME, PLUG_VERSION, PLUG_CREATOR);
 	
-	fwd_check = CreateMultiForward("auth_check", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL, FP_CELL);
+	// Регистрация forward-функций
+	fwd_check         = CreateMultiForward("auth_check", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL, FP_CELL);
 	fwd_status_change = CreateMultiForward("auth_status_change", ET_IGNORE, FP_CELL, FP_CELL, FP_CELL, FP_CELL);
 	
-	cache_string(sault_cache, sault_cache);           // Покупаем соль...
-	database_init();
+	// Регистрация cvar'ов
+	cvar_authflag = register_cvar("auth_identify_by", "a");
+	cvar_sault    = register_cvar("auth_security_sault", "229a51b0b6d67a8b079248b260064c89a7050ea334ed695399815e76f6f9f5a2");
+	
+	storage_init();
+}
+
+public plugin_cfg() {
+	new flags[4];
+	
+	// Читаем квары
+	get_pcvar_string(cvar_sault, sault_cache, CACHE_LENGTH-1);
+        get_pcvar_string(cvar_authflag, flags, 3);
+        
+        // Покупаем соль для хеширования
+	cache_string(sault_cache, sault_cache);
+	
+	// Устанавливаем поля для идентификации пользователя
+	auth_flag = read_flags(flags);
 }
 
 public plugin_natives() {
-	register_native("auth_player_status", "native__status", true);
-	register_native("auth_get_byplayer","native__get_byplayer", true);
-	register_native("auth_adduser",     "native__adduser", true);
-	register_native("auth_getuser",     "native__getuser", true);
-	register_native("auth_deluser",     "native__deluser", true);
-	register_native("auth_usermod",     "native__usermod", true);
-	register_native("auth_get_playerinfo","native__get_playerinfo", true);
-	register_native("auth_set_playerinfo","native__set_playerinfo", true);
-	register_native("auth_flush_playerinfo","native__flush_playerinfo", true);
-	register_native("auth_force_login", "native__forcelogin", true);
-	register_native("auth_force_logout","native__forcelogout", true);
+	register_native("auth_player_status",   "native__status");
+	register_native("auth_get_byplayer",    "native__get_byplayer");
+	register_native("auth_adduser",         "native__adduser");
+	register_native("auth_getuser",         "native__getuser");
+	register_native("auth_deluser",         "native__deluser");
+	register_native("auth_usermod",         "native__usermod");
+	register_native("auth_get_playerinfo",  "native__get_playerinfo");
+	register_native("auth_set_playerinfo",  "native__set_playerinfo");
+	register_native("auth_flush_playerinfo","native__flush_playerinfo");
+	register_native("auth_force_login",     "native__forcelogin");
+	register_native("auth_force_logout",    "native__forcelogout");
 }
-
-/*
-database_create_user(data[UserStruct]) {
-        players_cache[0] = data;
-}
-
-database_find_user(data[UserStruct]) {
-        data = players_cache[0];
-}
-
-database_modify_user(user_id, data[UserStruct]) {
-        players_cache[user_id] = data;
-}
-
-database_delete_user(user_id) {
-        new user[UserStruct] = user_proto_default;
-        players_cache[user_id] = user;
-}*/
 
 /*===================================== Нативы плагина =====================================*/
-public AuthStatus:native__status(p_id) {
+
+
+/**
+* Метод возвращает статус игрока (см. AuthStatus)
+* @Param playerID - номер игрока на сервере
+* @return AuthStatus - статус авторизации игрока
+*/
+public native__status(pluginID, args) {
+        // аргументы метода
+        static p_id;
+        
+        // получение аргументов
+        p_id = get_param_byref(1);
+        
         return players_cache[p_id][us_authstatus];
 }
 
-public native__get_byplayer(p_id, data[UserStruct]) {
-        data = players_cache[p_id];
-}
 
-public native__adduser(user_id, 
-                       username[NICK_LENGTH], 
-                       steam[STEAM_LENGTH], 
-                       ip[IP_LENGTH], 
-                       password[CACHE_LENGTH], 
-                       AuthFailActions:authfail, AuthFlags:authflags, accessflags, 
-                       data[UserStruct]) {
+/**
+* Метод возвращает ID зарегистрированного игрока по его номеру
+* @Param playerID - номер игрока на сервере
+* @return user_id - номер зарегистрированного пользователя. 0 - пользователь не найден/не авторизован
+*/
+public native__get_byplayer(pluginID, args) {
+        // аргументы метода
+        static p_id;
         
-        // Парсим данные в структуру data
-        if(strcmp(username, " ") == 1) data[us_nickname] = username;
-        if(strcmp(steam, " ") == 1) data[us_steam] = steam;
-        if(strcmp(ip, " ") == 1) data[us_ip] = ip;
-        if(strcmp(password, " ") == 1) {
-                data[us_password] = password;
-        }
-        if(user_id > 0) data[us_user_id] = user_id;
-        if(authfail != AFAIL_NULL) data[us_authfail] = _:authfail;
-        if(authflags != AFLAG_NULL) data[us_authflags] = _:authflags;
-        if(accessflags != -1) data[us_accessflags] = accessflags;
+        // получение аргументов
+        p_id = get_param_byref(1);
         
-        cache_string(data[us_password], sault_cache);
+        if(players_cache[p_id][us_authstatus] != AUTH_SUCCESS) 
+                return 0;
         
-        database_create_user(data);
+        return players_cache[p_id][us_user_id];
 }
 
-public native__getuser(user_id, username[NICK_LENGTH], steam[STEAM_LENGTH], ip[IP_LENGTH], password[CACHE_LENGTH], data[UserStruct]) {
-        data[us_user_id] = user_id;
-        data[us_nickname] = username;
-        data[us_steam] = steam;
-        data[us_ip] = ip;
-        data[us_password] = password;
+
+/**
+* Метод регистрирует нового пользователя с помощью передачи пар ключ-значение (См. UserStruct)
+* @Param UserStruct:api_key; - ключ
+* @Param any:value;          - значение
+* @OptParam [...];           - последовательность пар ключ-значение
+* @OptParam callback[];      - имя функции для обратного вызова и возврата результата
+* @return user_id            - номер пользователя в БД. 0 - в случае неудачи
+*
+* @callback(user_id);        - функция, имя которой передано для обратного вызова и её параметры
+*
+* @usage auth_adduser(api_key, value[, api_key, value[...], callback[] = ""]);
+* @usage auth_adduser(UserStruct, user);
+* @usage auth_adduser(us_nickname, "YoNickName", us_password, "YoPassword");
+*/
+public native__adduser(pluginID, args) {
+        new user[UserStruct] = user_proto;              // Запись пользователя
+        new thread_info[ThreadData] = thread_proto;     // Настройки поточного обращения к БД
         
-        database_find_user(data);
-}
-
-public native__deluser(user_id) {
-        database_delete_user(user_id);
-}
-
-public native__usermod(user_id, 
-                       username[NICK_LENGTH], 
-                       steam[STEAM_LENGTH], 
-                       ip[IP_LENGTH], 
-                       password[CACHE_LENGTH], 
-                       AuthFailActions:authfail, AuthFlags:authflags, accessflags, 
-                       data[UserStruct]) {
-        // Парсим данные в структуру data
-        if(strcmp(username, " ") == 1) data[us_nickname] = username;
-        if(strcmp(steam, " ") == 1) data[us_steam] = steam;
-        if(strcmp(ip, " ") == 1) data[us_ip] = ip;
-        if(strcmp(password, " ") == 1) {
-                data[us_password] = password;
-        }
-        if(user_id > 0) data[us_user_id] = user_id;
-        if(authfail != AFAIL_NULL) data[us_authfail] = _:authfail;
-        if(authflags != AFLAG_NULL) data[us_authflags] = _:authflags;
-        if(accessflags != -1) data[us_accessflags] = accessflags;
+        // Парсим аргументы натива
+        parse_native_arguments(pluginID, args, user, thread_info);
         
-        cache_string(data[us_password], sault_cache);
+        // Кешируем строку пароля
+        cache_string(user[us_password], sault_cache);
         
-        database_modify_user(user_id, data);
+        // Возвращаем либо -1 в случае потокового вызова, либо номер пользователя
+        return storage_create_user(user, thread_info);
 }
 
-public native__get_playerinfo(p_id, data[UserStruct]) {
-        data = players_cache[p_id];
-}
 
-public native__set_playerinfo(p_id, 
-                       username[NICK_LENGTH], 
-                       steam[STEAM_LENGTH], 
-                       ip[IP_LENGTH], 
-                       password[CACHE_LENGTH], 
-                       AuthFailActions:authfail, AuthFlags:authflags, accessflags, 
-                       data[UserStruct]) {
-        // Парсим данные в структуру data
-        if(strcmp(username, " ") == 1) data[us_nickname] = username;
-        if(strcmp(steam, " ") == 1) data[us_steam] = steam;
-        if(strcmp(ip, " ") == 1) data[us_ip] = ip;
-        if(strcmp(password, " ") == 1) {
-                data[us_password] = password;
-        }
-        if(data[us_user_id] > 0) players_cache[p_id][us_user_id] = data[us_user_id];
-        if(authfail != AFAIL_NULL) data[us_authfail] = _:authfail;
-        if(authflags != AFLAG_NULL) data[us_authflags] = _:authflags;
-        if(accessflags != -1) data[us_accessflags] = accessflags;
+/**
+* Метод получает данные пользователя(-лей) по парам ключ-значение
+* @Param UserStruct:api_key; - ключ
+* @Param any:value;          - значение
+* @OptParam[...];            - последовательность пар ключ-значение
+* @OptParam callback[];      - имя функции для обратного вызова и возврата результата
+* @return Handle:array       - массив найденных пользователей по заданным ключам
+*
+* @callback(Handle:array);   - функция обратного вызова, будет передан параметр Handle с результатами
+*/
+public any:native__getuser(pluginID, args) {
+        new user[UserStruct] = user_proto;              // Запись пользователя для поиска
+        new thread_info[ThreadData] = thread_proto;     // Настройки поточного обращения к БД
         
-        cache_string(data[us_password], sault_cache);
+        // Парсим аргументы натива
+        parse_native_arguments(pluginID, args, user, thread_info);
         
-        players_cache[p_id] = data;
+        // Возвращаем либо -1 в случае потокового вызова, либо Handle массива с результатами
+        return storage_find_user(user, thread_info);
 }
 
-public native__flush_playerinfo(p_id) {
-        database_modify_user(players_cache[p_id][us_user_id], players_cache[p_id]);
+
+/**
+* Метод удаляет пользователя(-лей) из БД по заданным данным
+* @Param UserStruct:api_key; - ключ
+* @Param any:value;          - значение
+* @OptParam[...];            - последовательность пар ключ-значение
+* @OptParam callback[];      - имя функции для обратного вызова и возврата результата
+* @return count              - количество затронутых записей
+*
+* @callback(count);          - функция обратного вызова, будет передан параметр с количеством затронутых записей
+*/
+public native__deluser(pluginID, args) {
+        new user[UserStruct] = user_proto;              // Запись пользователя для поиска
+        new thread_info[ThreadData] = thread_proto;     // Настройки поточного обращения к БД
+        
+        // Парсим аргументы натива
+        parse_native_arguments(pluginID, args, user, thread_info);
+        
+        // Возвращаем либо -1 в случае потокового вызова, либо количество удалёных записей
+        return storage_delete_user(user, thread_info);
 }
 
-public native__forcelogin(p_id, user_id, skip_checks) {
-        auth_getuser(.user_id=user_id, .data = players_cache[p_id]);
-        if(!skip_checks)
-                authorize_client(p_id);
+
+/**
+* Метод изменяет пользователя с номером user_id по заданным ключам
+* Метод удаляет пользователя из БД
+* @Param user_id             - номер пользователя в БД
+* @Param UserStruct:api_key; - ключ
+* @Param any:value;          - значение
+* @OptParam[...];            - последовательность пар ключ-значение
+* @OptParam callback[];      - имя функции для обратного вызова и возврата результата
+* @return bool:result        - результат выполнения операции
+*
+* @callback(bool:result);    - функция обратного вызова, будет передан параметр с результатом выполнения операции
+*/
+public native__usermod(pluginID, args) {
+        new user[UserStruct] = user_proto;              // Запись пользователя 
+        new thread_info[ThreadData] = thread_proto;     // Настройки поточного обращения к БД
+        new user_id = get_param_byref(1);
+        
+        // Парсим аргументы натива
+        parse_native_arguments(pluginID, args, user, thread_info, 1);
+        
+        storage_modify_user(user_id, user, thread_info);
 }
 
-public native__forcelogout(p_id) {
-        if(auth_player_status(p_id) && AUTH_SUCCESS) 
+
+/**
+* Метод получает кешированную информацию о пользователе
+* @Param player_id           - номер игрока на сервере
+* @Param user[UserStruct]    - структура, в которую будет записана информация о пользователе
+*/
+public native__get_playerinfo(pluginID, args) {
+        // аргументы метода
+        static p_id;
+        
+        // получение аргументов
+        p_id = get_param_byref(1);
+        
+        set_array(2, players_cache[p_id], UserStruct);
+}
+
+
+/**
+* Метод задаёт кешированную информацию о пользователе
+* @Param player_id           - номер игрока на сервере
+* @Param user[UserStruct]    - структура, которая будет записана
+*/
+public native__set_playerinfo(pluginID, args) {
+        new thread_info[ThreadData] = thread_proto;     // Настройки поточного обращения к БД
+        new p_id = get_param_byref(1);
+        
+        // Парсим аргументы натива
+        parse_native_arguments(pluginID, args, players_cache[p_id], thread_info, 1);
+        
+        cache_string(players_cache[p_id][us_password], sault_cache);
+}
+
+
+/**
+* Метод заносит информацию о пользователе в базу данных
+* @Param p_id           - номер игрока на сервере
+*/
+public native__flush_playerinfo(pluginID, args) {
+        new p_id = get_param_byref(1);
+        storage_modify_user(players_cache[p_id][us_user_id], players_cache[p_id]);
+}
+
+
+/**
+* Метод позволяет форсировать авторизацию игрока
+* @Param player_id - номер игрока на сервере
+* @Param user_id - номер зарегистрированного игрока
+* @Param skip_checks - пропускать проверки подлинности
+*/
+public native__forcelogin(pluginID, args) {
+        
+        // аргументы метода
+        static p_id, user_id, skip_checks;
+        
+        // получение аргументов
+        p_id = get_param_byref(1);
+        user_id = get_param_byref(2);
+        skip_checks = get_param_byref(3);
+
+        if(skip_checks)
+                auth_getuser(AUTH_EXTRA, p_id, us_user_id, user_id, "identify_client");
+}
+
+
+/**
+* Метод позволяет форсировать выход игрока
+* @Param player_id - номер игрока на сервере
+*/
+public native__forcelogout(pluginID, args) {
+        static p_id;
+        p_id = get_param_byref(1);
+        if(players_cache[p_id][us_authstatus] && AUTH_SUCCESS) 
                 unauthorize_client(p_id);
 }
 
+
 /*========================================= События ========================================*/
 public client_putinserver(p_id) {
-	    authorize_client(p_id);
+        authorize_client(p_id);
 }
 
 public client_disconnected(p_id) {
-	    unauthorize_client(p_id);
+        unauthorize_client(p_id);
 }
 
 /*================================== Процедуры авторизации =================================*/
 
+// Записывает данные игрока в его кеш
 parse_client_data(p_id) {
-        new user[UserStruct] = user_proto_default;
+        new user[UserStruct] = user_proto;
         players_cache[p_id] = user;
         get_user_name(p_id, players_cache[p_id][us_nickname], NICK_LENGTH); 
         get_user_authid(p_id, players_cache[p_id][us_steam], STEAM_LENGTH);
@@ -221,8 +316,37 @@ parse_client_data(p_id) {
         players_cache[p_id][us_authstatus] = _:AUTH_EMPTY;
 }
 
-authorize_client(p_id, skip_reg = false) {
-        static user[UserStruct]; 
+// Периодическая авторизация, если пользователь всё ещё регистрируется
+public authorize_client_task(t_id) {
+        authorize_client(t_id - retry_timer_offset);
+}
+
+// Поддельный вход
+public authorize_client_fake(Array:handle, p_id) {
+        change_status(p_id, AUTH_SUCCESS);
+        static user[UserStruct];
+        
+        array_read_user(handle, user);
+        ArrayDestroy(handle);
+        players_cache[p_id] = user;
+}
+
+// Процедура регистрации нового пользователя
+public register_client(p_id) {
+        // Если пользователь не идентифицирован и не проходит регистрацию
+        // то задать статус регистрации, добавить в БД запись пользователя
+        if(players_cache[p_id][us_authstatus] != AUTH_NOT_REGISTERED
+        && change_status(p_id, AUTH_NOT_REGISTERED) == AUTH_CONTINUE) {
+                auth_adduser(UserStruct, players_cache[p_id], "");
+        } 
+        
+        // Установить задержку перед следующей авторизацией
+        set_task(3.0, "authorize_client_task", retry_timer_offset+p_id);
+}
+
+// Старт процедуры авторизации
+authorize_client(p_id) {
+        static user[UserStruct];
         
         if(!is_user_connected(p_id)) 
                 return;
@@ -230,26 +354,32 @@ authorize_client(p_id, skip_reg = false) {
         parse_client_data(p_id);        // Получаем данные игрока
         user = players_cache[p_id];     // Дублируем данные
         
-        new info[2]; info[0] = p_id; info[1] = skip_reg;
-        server_print("[AuthSystem] Searcing user");
-        
-        // Идентификация
+        server_print("[AuthSystem] Searching user");
         identify_mask(user, auth_flag);
-        database_find_user(.data = user, .threaded = true, .callback = "database_identify", .extras = info, .size = 2);       // Получаем данные пользователя в БД
+        auth_getuser(AUTH_EXTRA, p_id, UserStruct, user, "identify_client");
 }
 
-// процесс идентификации клиента, вызывается при асинхронном запросе
-identify_client(p_id, user[UserStruct], skip_reg) {
+// Идентификация клиента
+public identify_client(Array:handle, p_id) {
+        static user[UserStruct];
+        array_read_user(handle, user);
+        
+        ArrayDestroy(handle);
+        authenticate_client(user, p_id);
+}
+
+// процесс аутентификация клиента, вызывается при асинхронном запросе
+public authenticate_client(user[UserStruct], p_id) {
         server_print("[AuthSystem] Indentify...");
         new bool: auth_success = true;
         static res;
-        // Регистрация (пользователь не найден в БД)
-        if(user[us_user_id] == 0 && !skip_reg) {
+        // Пользователя нет в БД, регистрируем его с последующей переавторизацией
+        if(user[us_user_id] == 0) {
                 server_print("[AuthSystem] Registering...");
-                if(change_status(p_id, AUTH_NOT_REGISTERED) == AUTH_CONTINUE) {
-                        database_create_user(players_cache[p_id]);
-                        authorize_client(p_id, true);
-                } 
+                
+                register_client(p_id);
+                return;
+                
         } else {
 
                 // Аутентификация
@@ -276,23 +406,31 @@ identify_client(p_id, user[UserStruct], skip_reg) {
                 }
         }
 
-        if(auth_success) { // Авторизация успешна, меняем статус и отправляем его другим плагинам
-                change_status(p_id, AUTH_SUCCESS);
+        // Проверки пройдены,
+        // Плагины разрешили пользователю пройти авторизацию
+        // Сохраняем пользователю структуру и выдаем его номер
+        if(change_status(p_id, AUTH_SUCCESS) == AUTH_CONTINUE && auth_success) { 
+                players_cache[p_id] = user;
+                server_print("[AuthSystem] %d :: %s has logged in.", players_cache[p_id][us_user_id], players_cache[p_id][us_nickname]);
+                
                 return;
         }
-        else { // Авторизация не успешна, -//-
+        // Авторизация не успешна или плагины заблокировали авторизацию
+        // Меняем статус игроку как провалившему проверку
+        else { 
                 change_status(p_id, AUTH_FAIL);
                 return;
         }
 }
 
 unauthorize_client(p_id) {
-        new user[UserStruct] = user_proto_default;
+        new user[UserStruct] = user_proto;
 
         players_cache[p_id] = user;
-        if(is_user_connected(p_id)) change_status(p_id, AUTH_FAIL);
-
-        change_status(p_id, AUTH_EMPTY);
+        if(is_user_connected(p_id)) 
+                change_status(p_id, AUTH_FAIL);
+        else
+                change_status(p_id, AUTH_EMPTY);
 }
 
 cache_passwd(p_id) {
@@ -304,22 +442,80 @@ cache_passwd(p_id) {
         copy(players_cache[p_id][us_password], CACHE_LENGTH-1, passwd);
 }
 
-change_status(p_id, AuthStatus:status) {
+change_status(p_id, status) {
         static res;
+        static user_id;
+        if(players_cache[p_id][us_user_id])
+                user_id = players_cache[p_id][us_user_id];
+        else
+                user_id = 0;
         
         if(status == players_cache[p_id][us_authstatus]) 
                 return AUTH_CONTINUE;
-        ExecuteForward(fwd_check, res, p_id, _:status, _:players_cache[p_id][us_authstatus], players_cache[p_id][us_user_id]);
+        ExecuteForward(fwd_check, res, p_id, status, players_cache[p_id][us_authstatus], user_id);
 	
-	if(res == AUTH_SUPERCEDE) {
-        	ExecuteForward(fwd_status_change, res, p_id, status, players_cache[p_id][us_authstatus], players_cache[p_id][us_user_id]);
-                players_cache[p_id][us_authstatus] = _:status;
+	// Плагины отправили AUTH_CONTINUE, разрешив работу форварда
+	if(res == AUTH_CONTINUE) {
+        	ExecuteForward(fwd_status_change, res, p_id, status, players_cache[p_id][us_authstatus], user_id);
+                players_cache[p_id][us_authstatus] = status;
         }
         
         return res;
 }
 
 /*================================== Прочие методы плагина =================================*/
+
+
+// Организуем получение аргументов по паре "ключ-значение"
+parse_native_arguments(pluginID, args, user[UserStruct], thread_info[ThreadData], param = 0) {
+        // Т.к. user и thread_info - массивы, а массивы передаются через указатели,
+        // то если мы изменим значения здесь, то они изменятся и в месте, откуда вызван парсер
+        // Это позволит держать код DRY.
+        static property, callback[64];
+        
+        do {
+                property = get_param_byref(++param);
+
+                switch(property) {
+                        case UserStruct: get_array(++param, user, UserStruct-1);
+                        case us_nickname: get_string(++param, user[us_nickname], NICK_LENGTH-1);
+                        case us_steam: get_string(++param, user[us_steam], STEAM_LENGTH-1);
+                        case us_ip: get_string(++param, user[us_ip], IP_LENGTH-1);
+                        case us_password: get_string(++param, user[us_password], CACHE_LENGTH-1);
+                        case us_authfail, us_authflags, us_accessflags: {
+                                user[property] = get_param_byref(++param);
+                        }
+                        case AUTH_EXTRA: {
+                                thread_info[TDInfoFlags] = get_param_byref(++param);
+                        }
+                }
+                
+                // Если остался последний параметр, то это метод обратного вызова
+                // Подготавливаем данные для поточного обращения к БД
+                if(param+1 == args) {
+                        get_string(++param, callback, 63);
+                        thread_info[TDFunction] = get_func_id(callback, pluginID);
+                        
+                        // При пустой строке просто выполняем запрос к БД в отдельном потоке
+                        if(equal(callback, "")) {
+                                thread_info[useThread] = true;
+                                return;
+                        }
+                        
+                        // Функция была найдена в вызывающем плагине;
+                        // Задаём параметры обратного вызова
+                        if(thread_info[TDFunction] >= 0) {
+                                thread_info[TDPlugin] = pluginID;
+                                thread_info[useThread] = true;
+                        } else {
+                                // Кидаем предупреждение, что метод не найден
+                                server_print("[AuthSystem] Warning: Callback not found.");
+                        }
+                }
+                        
+        } while (param <= args);
+        return;
+}
 
 // Спецзаказ: выдержанная в соли кешированная строка
 cache_string(text[], const sault[]) {
@@ -346,8 +542,8 @@ stock dump_userinfo(data[UserStruct], message[] = "") {
         server_print("> accessflags: %d", data[us_accessflags]);
 }
 
-identify_mask(user[UserStruct], AuthFlags:auth_mask) {
-        static defaults[UserStruct] = user_proto_default;
+identify_mask(user[UserStruct], auth_mask) {
+        static defaults[UserStruct] = user_proto;
         
         if(auth_mask & ~AFLAG_NICK) 
                 copy(user[us_nickname], NICK_LENGTH, defaults[us_nickname]);

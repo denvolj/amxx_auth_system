@@ -1,19 +1,28 @@
 
 
-#if defined _authorization_database_interface_included
+#if defined _authorization_storage_interface_included
         #endinput
 #endif
-#define _authorization_database_interface_included
+#define _authorization_storage_interface_included
 
 #include <auth_core>
 #include <sqlx> 
+
+
+/*============================= Конфигурация базы данных ===================================*/
+new const db_host[]     = "localhost";
+new const db_username[] = "root";
+new const db_password[] = "root";
+new const db_database[] = "zombielite";
+/*==========================================================================================*/
+
 
 /*=============================== Структуры базы данных ====================================*/
 enum _:SQLD
 {
 	Handle:sqld_tuple,
 	Handle:sqld_instance
-};
+}; 
 
 
 /*============================= Блок констант и запросов ===================================*/
@@ -41,20 +50,22 @@ new const __AUTH_INSERT[] = \
 
 new const __AUTH_SELECT[] =  "SELECT * FROM auth_system WHERE %s;";
 new const __AUTH_UPDATE[] =  "UPDATE auth_system SET %s WHERE uid=%d;";
-new const __AUTH_DELETE[] =  "DELETE FROM auth_system WHERE uid=%d;";
+new const __AUTH_DELETE[] =  "DELETE FROM auth_system WHERE %s;";
 
 /*=============================== Реализация взаимодействий ================================*/
-database_init() {
+storage_init() {
         new query[SQL_QLIM]; 
-        format(query, SQL_QLIM-1, __AUTH_CREATE, NICK_LENGTH, STEAM_LENGTH, IP_LENGTH, CACHE_LENGTH);
+        new thread_info[ThreadData] = thread_proto;
+        thread_info[useThread] = true;
         
-        return mysql_exec(query, true);
+        format(query, SQL_QLIM-1, __AUTH_CREATE, NICK_LENGTH, STEAM_LENGTH, IP_LENGTH, CACHE_LENGTH);
+        return mysql_exec(query, thread_info);
 }
-
-database_create_user(data[UserStruct], threaded = true, callback[] = "mysql_query_handler", extras[] = "", size = 0) {
-        new query[SQL_QLIM]; query = __AUTH_INSERT;            // Базовая строка запроса
-        new temp[UserStruct];
-        new values[SQL_QLIM/2];
+// user, thread_info
+storage_create_user(data[UserStruct], thread_info[ThreadData] = thread_proto) {
+        new query[SQL_QLIM]; query = __AUTH_INSERT; // Базовая строка запроса
+        new temp[UserStruct];                       // Объект с экранированными данными
+        new values[SQL_QLIM/2];                     // Отформатированная строка значений
         
         screen_object(data, temp);
         
@@ -95,88 +106,244 @@ database_create_user(data[UserStruct], threaded = true, callback[] = "mysql_quer
        
         format(query, SQL_QLIM-1, query, values);
         
-        return mysql_exec(query, threaded, callback, extras, size);
+        // Выполняем запрос на создание пользователя в таблице
+        new Handle:h_results = mysql_exec(query, thread_info, "thread__storage_create");
+        new last_id = -1;       // По умолчанию: если last_id=-1, то это потоковый запрос
+        
+        // Возвращаем -2, ибо проблемы с коннектом до БД
+        if(h_results == Empty_Handle) {
+                return -2;
+        }
+        
+        // Если запрос не поточный, то получаем последний вставленный ID
+        // К сожалению, может случиться косяк, если БД не вставит строку:
+        // мы получим ID предыдущей записи.
+        // На убунте возможно падение из за косяка драйвера мускуля D:<
+        //if(!thread_info[useThread]) 
+        //        last_id = SQL_GetInsertId(h_results);
+                
+        SQL_FreeHandle(h_results); 
+        return last_id;
 }
 
-database_find_user(data[UserStruct], threaded = false, callback[] = "mysql_query_handler", extras[] = "", size = 0) {
-        new query[SQL_QLIM]; query = __AUTH_SELECT;
-        new where_clause[SQL_QLIM/2];
+storage_find_user(data[UserStruct], thread_info[ThreadData] = thread_proto) {
+        new query[SQL_QLIM]; query = __AUTH_SELECT;     // Базовая строка запроса
+        new temp[UserStruct];                           // Структура для хранения пользователя
+        new where_clause[SQL_QLIM/2];                   // Уточнающая строка
         
+        // Строим уточнающую строку
         where_state(data, where_clause, " AND ");
         
+        // Собираем строку запроса
         format(query, SQL_QLIM-1, query, where_clause);
         
-        if(threaded)
-                return mysql_exec(query, threaded, callback, extras, size);
+        new Handle:h_results = mysql_exec(query, thread_info, "thread__storage_read");
         
-        new Handle:result = mysql_exec(query, threaded, callback, extras, size);
+        // Возвращаем -2, ибо проблемы с коннектом до БД
+        if(h_results == Empty_Handle) {
+                return -2;
+        }
         
-        if(SQL_MoreResults(result)) {
-		parse_results(result, data);
-		return true;
-	} 
-	
-        return false;
+        // Если запрос не поточный, то парсим результат
+        if(!thread_info[useThread]) {
+                // Заводим массив для сохранения всех данных, что попали в выборку
+                new Array:results = ArrayCreate(UserStruct);
+                
+                // Парсим результаты в массив
+                while(SQL_MoreResults(h_results)) {
+		        parse_results(h_results, temp);
+		        ArrayPushArray(results, temp);
+                        SQL_NextRow(h_results);
+	        } 
+                ArrayDestroy(results);
+                SQL_FreeHandle(h_results); 
+	}
+        
+        // Слооожна! 
+        // Условие: 
+        // Если поточный запрос - возвращать -1, иначе - массив с результатами с лояльным тегом (_:)
+        return (thread_info[useThread])? -1 : _:h_results;
 }
 
-database_modify_user(user_id, data[UserStruct], threaded = true, callback[] = "mysql_query_handler", extras[] = "", size = 0) {
-        new query[SQL_QLIM]; query = __AUTH_UPDATE;
-        new where_clause[SQL_QLIM/2];
+
+storage_modify_user(user_id, data[UserStruct], thread_info[ThreadData] = thread_proto) {
+        new query[SQL_QLIM]; query = __AUTH_UPDATE;     // Базовая строка запроса
+        new set_statement[SQL_QLIM/2];                  // Строка параметров
         
-        where_state(data, where_clause, ", ");
+        // Задаём строку параметров
+        where_state(data, set_statement, ", ");
         
-        format(query, SQL_QLIM-1, query, where_clause, user_id);
+        // Строим строку запроса
+        format(query, SQL_QLIM-1, query, set_statement, user_id);
         
-        return mysql_exec(query, threaded, callback, extras, size);
+        new Handle:h_results = mysql_exec(query, thread_info, "thread__storage_write");
+        
+        // Возвращаем -2, ибо проблемы с коннектом до БД
+        if(h_results == Empty_Handle) {
+                return -2;
+        }
+        if(!thread_info[useThread]) {
+                SQL_FreeHandle(h_results); 
+        }
+        
+        return (thread_info[useThread])? -1 : 1;
 }
 
-database_delete_user(user_id, threaded = true, callback[] = "mysql_query_handler", extras[] = "", size = 0) {
+storage_delete_user(data[UserStruct], thread_info[ThreadData] = thread_proto) {
         new query[SQL_QLIM]; query = __AUTH_DELETE;
+        new del_statement[SQL_QLIM/2];                  // Строка параметров
         
-        format(query, SQL_QLIM-1, query, user_id);
+        // Задаём строку параметров
+        where_state(data, del_statement, ", ");
         
-        return mysql_exec(query, threaded, callback, extras, size);
+        // Строим строку запроса
+        format(query, SQL_QLIM-1, query, del_statement);
+        
+        new Handle:h_results = mysql_exec(query, thread_info, "thread__storage_delete");
+        new affected_rows = SQL_AffectedRows(h_results);
+        
+        // Возвращаем -2, ибо проблемы с коннектом до БД
+        if(h_results == Empty_Handle) {
+                return -2;
+        }
+	
+        if(!thread_info[useThread]) {
+                SQL_FreeHandle(h_results); 
+        }
+        
+        return (thread_info[useThread])? -1 : affected_rows;
+}
+
+/*=============================== Методы обратного вызова ==================================*/
+
+public thread__storage_create(failstate, Handle:h_results, error[], errnum, thread_info[], size, Float:queuetime) {
+        thread__debug(failstate, h_results, error, errnum, thread_info, size, queuetime);
+        
+        if(h_results == Empty_Handle)
+                return;
+        
+        if(thread_info[TDFunction] < 0)
+                return;
+        
+        switch(callfunc_begin_i(thread_info[TDFunction], thread_info[TDPlugin])) {
+	        case 1: {
+			callfunc_push_int(SQL_GetInsertId(h_results));
+			if(thread_info[TDInfoFlags] > 0) 
+			        callfunc_push_int(thread_info[TDInfoFlags]);
+		        callfunc_end();
+		        return;
+	        }
+	        case 0,-1,-2: {
+	                return;
+	        }
+        }
+}
+
+public thread__storage_read(failstate, Handle:h_results, error[], errnum, thread_info[], size, Float:queuetime) {
+        thread__debug(failstate, h_results, error, errnum, thread_info, size, queuetime);
+
+        if(h_results == Empty_Handle)
+                return;
+        
+        if(thread_info[TDFunction] < 0)
+                return;
+        
+        switch(callfunc_begin_i(thread_info[TDFunction], thread_info[TDPlugin])) {
+	        case 1: {
+	                // Заводим массив для сохранения всех данных, что попали в выборку
+                        new Array:results = ArrayCreate(UserStruct);
+                        new temp[UserStruct];     // Структура для хранения пользователя
+                        
+                        // Парсим результаты в массив
+                        while(SQL_MoreResults(h_results)) {
+		                parse_results(h_results, temp);
+		                ArrayPushArray(results, temp);
+                                SQL_NextRow(h_results);
+	                } 
+	                ArrayDestroy(results);
+			callfunc_push_int(_:results);
+			if(thread_info[TDInfoFlags] > 0) 
+			        callfunc_push_int(thread_info[TDInfoFlags]);
+		        callfunc_end();
+		        return;
+	        }
+	        case 0,-1,-2: {
+	                return;
+	        }
+        }
+}
+
+public thread__storage_update(failstate, Handle:h_results, error[], errnum, thread_info[], size, Float:queuetime) {
+        thread__debug(failstate, h_results, error, errnum, thread_info, size, queuetime);
+
+        if(h_results == Empty_Handle)
+                return;
+        
+        if(thread_info[TDFunction] < 0)
+                return;
+        
+        switch(callfunc_begin_i(thread_info[TDFunction], thread_info[TDPlugin])) {
+	        case 1: {
+			callfunc_push_int(1);
+			if(thread_info[TDInfoFlags] > 0) 
+			        callfunc_push_int(thread_info[TDInfoFlags]);
+		        callfunc_end();
+		        return;
+	        }
+	        case 0,-1,-2: {
+	                return;
+	        }
+        }
+}
+
+public thread__storage_delete(failstate, Handle:h_results, error[], errnum, thread_info[], size, Float:queuetime) {
+        thread__debug(failstate, h_results, error, errnum, thread_info, size, queuetime);
+
+        if(h_results == Empty_Handle)
+                return;
+        
+        if(thread_info[TDFunction] < 0)
+                return;
+           
+        switch(callfunc_begin_i(thread_info[TDFunction], thread_info[TDPlugin])) {
+	        case 1: {
+			callfunc_push_int(SQL_AffectedRows(h_results));
+			if(thread_info[TDInfoFlags] > 0) 
+			        callfunc_push_int(thread_info[TDInfoFlags]);
+		        callfunc_end();
+		        return;
+	        }
+	        case 0,-1,-2: {
+	                return;
+	        }
+        }
+}
+
+public thread__debug(failstate, Handle:query, error[], errnum, data[], size, Float:queuetime) {
+        if(failstate != TQUERY_SUCCESS)    
+                server_print("[MySQL] SQL error [%d]: %s", errnum, error); 
 }
 
 /*==================================== Стоковые функции ====================================*/
-stock mysql_singletone(host[] = "localhost", username[] = "root", password[] = "root", database[] = "zombielite") {
-        static instance[SQLD];
-        if(instance[sqld_instance] == Empty_Handle) {
-                mysql_close(instance);
-                instance = mysql_connect(host, username, password, database);
-        }
-        
-        return instance;
-}
 
-stock mysql_connect(host[], username[], password[], database[]) {
-        new instance[SQLD];
+// Метод, исполняющий запрос (поточный, последовательный - не важно)
+stock any:mysql_exec(const sql_query[], thread_info[ThreadData], callback[] = "mysql_query_handler") {
         new s_Error[SQL_QLIM/2], i_Error;
-        instance[sqld_tuple] = _:SQL_MakeDbTuple(host, username, password, database);
-        instance[sqld_instance] = _:SQL_Connect(instance[sqld_tuple], i_Error, s_Error, charsmax(s_Error));
-
-        if(instance[sqld_instance] == Empty_Handle) {
-                log_amx("[MySQL] Database connection failed. [ErrNo: %d] %s ", i_Error, s_Error);
-
-                return instance;
-        }
-
-        return instance;
-}
-
-stock any:mysql_exec(const sql_query[], new_thread = false, callback[] = "mysql_query_handler", extras[] = "", size = 0) {
-        new s_Error[SQL_QLIM/2];
-        static instance[SQLD];
+        static database[SQLD];
+        database[sqld_tuple] = SQL_MakeDbTuple(db_host, db_username, db_password, db_database);
         
-        if(instance[sqld_instance] == Empty_Handle || instance[sqld_tuple] == Empty_Handle)
-        instance = mysql_singletone();
+        // Дебажируем вывод :3
+        server_print("[MySQL] Query: %s", sql_query);
+        if(thread_info[useThread])
+                server_print("[MySQL] Using threading...");
         
-        if(new_thread) {
-                SQL_ThreadQuery(instance[sqld_tuple], callback, sql_query, extras, size);
+        if(thread_info[useThread]) {
+                SQL_ThreadQuery(database[sqld_tuple], callback, sql_query, thread_info, ThreadData);
         }
         else {
                         
-                new Handle:result = SQL_PrepareQuery(instance[sqld_instance], sql_query);
+                database[sqld_instance] = SQL_Connect(database[sqld_tuple], i_Error, s_Error, charsmax(s_Error));
+                new Handle:result = SQL_PrepareQuery(database[sqld_instance], sql_query);
                 
                 if(!SQL_Execute (result)) {
                         SQL_QueryError(result, s_Error, charsmax(s_Error));
@@ -184,31 +351,26 @@ stock any:mysql_exec(const sql_query[], new_thread = false, callback[] = "mysql_
                 }
                 return result;
         }
+        
+        mysql_close(database);
 
         return true;
 }
 
+// Унифицированный приемщик результатов, если нужно было только выполнить запрос
 public mysql_query_handler(failstate, Handle:query, error[], errnum, data[], size, Float:queuetime) {
         if(failstate != TQUERY_SUCCESS)    server_print("[MySQL] SQL error [%d]: %s", errnum, error);
 }
 
-public database_identify(failstate, Handle:query, error[], errnum, data[], size, Float:queuetime) {
-        new user[UserStruct] = user_proto_default;
-        if(SQL_MoreResults(query)) {
-		parse_results(query, user);
-	} 
-        server_print("[AuthSystem] Calling back");
-	identify_client(data[0], user, data[1]);
-}
-
+// Убийца всех хендлеров :3
 stock mysql_close(instance[SQLD]) {
-        if(instance[sqld_tuple] != Empty_Handle)
-                SQL_FreeHandle(instance[sqld_tuple]); 
-        
         if(instance[sqld_instance] != Empty_Handle)
                 SQL_FreeHandle(instance[sqld_instance]);
+        if(instance[sqld_tuple] != Empty_Handle)
+                SQL_FreeHandle(instance[sqld_tuple]); 
 }
 
+// Избегаем опасных символов в запросах
 stock mysql_escape_string(dest[], len, const source[])
 {
 	copy(dest, len, source);
@@ -225,26 +387,21 @@ stock mysql_escape_string(dest[], len, const source[])
 
 /*=============================== Вспомогательные функции ==================================*/
 
+// Парсер результатов в структуру
 parse_results(Handle:sql_results, data[UserStruct]) {
 	new parsed = 0;
 	
-	data[us_user_id] = SQL_ReadResult(sql_results, parsed);
-	parsed += 1;
-	SQL_ReadResult(sql_results, parsed, data[us_nickname], NICK_LENGTH);
-	parsed += 1;
-	SQL_ReadResult(sql_results, parsed, data[us_steam], STEAM_LENGTH);
-	parsed += 1;
-	SQL_ReadResult(sql_results, parsed, data[us_ip], IP_LENGTH);
-	parsed += 1;
-	SQL_ReadResult(sql_results, parsed, data[us_password], CACHE_LENGTH);
-	parsed += 1;
-	data[us_authfail] = _:SQL_ReadResult(sql_results, parsed);
-	parsed += 1;
-	data[us_authflags] = _:SQL_ReadResult(sql_results, parsed);
-	parsed += 1;
-	data[us_accessflags] = _:SQL_ReadResult(sql_results, parsed);
+	data[us_user_id] = SQL_ReadResult(sql_results, parsed++);
+	SQL_ReadResult(sql_results, parsed++, data[us_nickname], NICK_LENGTH);
+	SQL_ReadResult(sql_results, parsed++, data[us_steam], STEAM_LENGTH);
+	SQL_ReadResult(sql_results, parsed++, data[us_ip], IP_LENGTH);
+	SQL_ReadResult(sql_results, parsed++, data[us_password], CACHE_LENGTH);
+	data[us_authfail] = _:SQL_ReadResult(sql_results, parsed++);
+	data[us_authflags] = _:SQL_ReadResult(sql_results, parsed++);
+	data[us_accessflags] = _:SQL_ReadResult(sql_results, parsed++);
 }
 
+// Копируем структуру и экранируем её строки
 screen_object(const source[UserStruct], destination[UserStruct]) {
         mysql_escape_string(destination[us_nickname], NICK_LENGTH-1, source[us_nickname]);
         format(destination[us_nickname], NICK_LENGTH-1, "'%s'", destination[us_nickname]);
@@ -263,6 +420,7 @@ screen_object(const source[UserStruct], destination[UserStruct]) {
         destination[us_user_id] = source[us_user_id];
 }
 
+// Построитель запроса
 where_state(const data[UserStruct], where_clause[SQL_QLIM/2], separator[]) {
         new temp[UserStruct], flag = false;
         
