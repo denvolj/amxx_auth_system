@@ -246,7 +246,7 @@ stock array_read_user(Array:new_handle, user[UserStruct], new_index = -1) {
         static Array:handle, index = 0, size = 1;
         
         if(any:new_handle <= 0)
-                return;
+                return false;
         
         if(handle != new_handle) {
                 handle = new_handle;
