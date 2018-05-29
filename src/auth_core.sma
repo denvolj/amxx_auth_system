@@ -23,7 +23,7 @@
 
 /*===================================== Блок констант ======================================*/
 #define PLUG_OBJNAME			"AuthSystemCore"
-#define PLUG_VERSION			"1.1.1"
+#define PLUG_VERSION			"1.1.2"
 #define PLUG_CREATOR			"Boec[SpecOPs]"
 
 
@@ -31,7 +31,6 @@
 new fwd_check, fwd_status_change;               // Форварды
 new players_cache[33][UserStruct];              // Кеш пользователей
 
-new retry_timer_offset = 0xFEAC2421;
 new auth_flag;                                  // Флаг идентификации
 new pass_key[5] = "_pw";                        // Поле пароля из user info
 new sault_cache[CACHE_LENGTH];                  // Соль безопасности для хеширования
@@ -316,9 +315,19 @@ parse_client_data(p_id) {
         players_cache[p_id][us_authstatus] = _:AUTH_EMPTY;
 }
 
-// Периодическая авторизация, если пользователь всё ещё регистрируется
-public authorize_client_task(t_id) {
-        authorize_client(t_id - retry_timer_offset);
+// Старт процедуры авторизации
+authorize_client(p_id) {
+        static user[UserStruct];
+        
+        if(!is_user_connected(p_id)) 
+                return;
+        
+        parse_client_data(p_id);        // Получаем данные игрока
+        user = players_cache[p_id];     // Дублируем данные
+        
+        server_print("[AuthSystem] Searching user");
+        identify_mask(user, auth_flag);
+        auth_getuser(AUTH_EXTRA, p_id, UserStruct, user, "identify_client");
 }
 
 // Поддельный вход
@@ -337,26 +346,12 @@ public register_client(p_id) {
         // то задать статус регистрации, добавить в БД запись пользователя
         if(players_cache[p_id][us_authstatus] != AUTH_NOT_REGISTERED
         && change_status(p_id, AUTH_NOT_REGISTERED) == AUTH_CONTINUE) {
-                auth_adduser(UserStruct, players_cache[p_id], "");
-        } 
-        
-        // Установить задержку перед следующей авторизацией
-        set_task(3.0, "authorize_client_task", retry_timer_offset+p_id);
+                auth_adduser(AUTH_EXTRA, p_id, UserStruct, players_cache[p_id], "post_register_auth");
+        }
 }
 
-// Старт процедуры авторизации
-authorize_client(p_id) {
-        static user[UserStruct];
-        
-        if(!is_user_connected(p_id)) 
-                return;
-        
-        parse_client_data(p_id);        // Получаем данные игрока
-        user = players_cache[p_id];     // Дублируем данные
-        
-        server_print("[AuthSystem] Searching user");
-        identify_mask(user, auth_flag);
-        auth_getuser(AUTH_EXTRA, p_id, UserStruct, user, "identify_client");
+public post_register_auth(u_id, p_id) {
+        auth_getuser(AUTH_EXTRA, p_id, us_user_id, u_id, "identify_client");
 }
 
 // Идентификация клиента
@@ -409,8 +404,8 @@ public authenticate_client(user[UserStruct], p_id) {
         // Проверки пройдены,
         // Плагины разрешили пользователю пройти авторизацию
         // Сохраняем пользователю структуру и выдаем его номер
+        players_cache[p_id] = user;
         if(change_status(p_id, AUTH_SUCCESS) == AUTH_CONTINUE && auth_success) { 
-                players_cache[p_id] = user;
                 server_print("[AuthSystem] %d :: %s has logged in.", players_cache[p_id][us_user_id], players_cache[p_id][us_nickname]);
                 
                 return;
@@ -418,7 +413,7 @@ public authenticate_client(user[UserStruct], p_id) {
         // Авторизация не успешна или плагины заблокировали авторизацию
         // Меняем статус игроку как провалившему проверку
         else { 
-                change_status(p_id, AUTH_FAIL);
+                unauthorize_client(p_id);
                 return;
         }
 }
@@ -445,10 +440,8 @@ cache_passwd(p_id) {
 change_status(p_id, status) {
         static res;
         static user_id;
-        if(players_cache[p_id][us_user_id])
-                user_id = players_cache[p_id][us_user_id];
-        else
-                user_id = 0;
+                
+        user_id = players_cache[p_id][us_user_id];
         
         if(status == players_cache[p_id][us_authstatus]) 
                 return AUTH_CONTINUE;

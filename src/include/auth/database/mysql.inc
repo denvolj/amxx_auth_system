@@ -122,7 +122,10 @@ storage_create_user(data[UserStruct], thread_info[ThreadData] = thread_proto) {
         //if(!thread_info[useThread]) 
         //        last_id = SQL_GetInsertId(h_results);
                 
-        SQL_FreeHandle(h_results); 
+        if(!thread_info[useThread]) {
+                SQL_FreeHandle(h_results); 
+	}
+        
         return last_id;
 }
 
@@ -260,7 +263,6 @@ public thread__storage_read(failstate, Handle:h_results, error[], errnum, thread
 		                ArrayPushArray(results, temp);
                                 SQL_NextRow(h_results);
 	                } 
-	                ArrayDestroy(results);
 			callfunc_push_int(_:results);
 			if(thread_info[TDInfoFlags] > 0) 
 			        callfunc_push_int(thread_info[TDInfoFlags]);
