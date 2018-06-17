@@ -23,7 +23,7 @@
 
 /*===================================== Блок констант ======================================*/
 #define PLUG_OBJNAME			"AuthSystemCore"
-#define PLUG_VERSION			"1.1.2"
+#define PLUG_VERSION			"1.1.3"
 #define PLUG_CREATOR			"Boec[SpecOPs]"
 
 
@@ -292,7 +292,7 @@ public native__forcelogout(pluginID, args) {
 
 
 /*========================================= События ========================================*/
-public client_putinserver(p_id) {
+public client_authorized(p_id) {
         authorize_client(p_id);
 }
 
