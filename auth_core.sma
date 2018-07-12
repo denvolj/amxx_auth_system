@@ -23,7 +23,7 @@
 
 /*===================================== Блок констант ======================================*/
 #define PLUG_OBJNAME			"AuthSystemCore"
-#define PLUG_VERSION			"1.1.3"
+#define PLUG_VERSION			"1.1.4"
 #define PLUG_CREATOR			"Boec[SpecOPs]"
 
 
