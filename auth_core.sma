@@ -286,18 +286,34 @@ public native__forcelogin(pluginID, args) {
 public native__forcelogout(pluginID, args) {
         static p_id;
         p_id = get_param_byref(1);
-        if(players_cache[p_id][us_authstatus] && AUTH_SUCCESS) 
+        if(players_cache[p_id][us_authstatus] == AUTH_SUCCESS) 
                 unauthorize_client(p_id);
 }
 
 
 /*========================================= События ========================================*/
+public client_connect(id) {
+        parse_client_data(id);        // Получаем данные игрока
+}
+
+public client_putinserver(p_id) {
+        if((players_cache[p_id][us_authstatus] == AUTH_NULL)) {
+                // Ожидаем, пока клиент нам вернёт свой steam_id
+                return;
+        }
+        authorize_client(p_id);
+}
+
 public client_authorized(p_id) {
+        if(!is_user_connected(p_id)){
+                // Ожидаем, пока клиент подключится 
+                return;
+        }
         authorize_client(p_id);
 }
 
 public client_disconnected(p_id) {
-        unauthorize_client(p_id);
+        unauthorize_client(p_id, true);
 }
 
 /*================================== Процедуры авторизации =================================*/
@@ -319,10 +335,6 @@ parse_client_data(p_id) {
 authorize_client(p_id) {
         static user[UserStruct];
         
-        if(!is_user_connected(p_id)) 
-                return;
-        
-        parse_client_data(p_id);        // Получаем данные игрока
         user = players_cache[p_id];     // Дублируем данные
         
         server_print("[AuthSystem] Searching user");
@@ -418,13 +430,14 @@ public authenticate_client(user[UserStruct], p_id) {
         }
 }
 
-unauthorize_client(p_id) {
+unauthorize_client(p_id, due_disconnect=false) {
         new user[UserStruct] = user_proto;
-
-        players_cache[p_id] = user;
-        if(is_user_connected(p_id)) 
+        user[us_authstatus]= players_cache[p_id][us_authstatus];
+        
+        if(is_user_connected(p_id) && !due_disconnect) {
+                players_cache[p_id] = user;
                 change_status(p_id, AUTH_FAIL);
-        else
+        } else
                 change_status(p_id, AUTH_EMPTY);
 }
 
@@ -446,6 +459,8 @@ change_status(p_id, status) {
         if(status == players_cache[p_id][us_authstatus]) 
                 return AUTH_CONTINUE;
         ExecuteForward(fwd_check, res, p_id, status, players_cache[p_id][us_authstatus], user_id);
+	
+	server_print("Status change: %d > %d", players_cache[p_id][us_authstatus], status);
 	
 	// Плагины отправили AUTH_CONTINUE, разрешив работу форварда
 	if(res == AUTH_CONTINUE) {
