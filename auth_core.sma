@@ -23,7 +23,7 @@
 
 /*===================================== Блок констант ======================================*/
 #define PLUG_OBJNAME			"AuthSystemCore"
-#define PLUG_VERSION			"1.1.4"
+#define PLUG_VERSION			"1.1.5"
 #define PLUG_CREATOR			"Boec[SpecOPs]"
 
 
@@ -333,7 +333,7 @@ parse_client_data(p_id) {
 
 // Старт процедуры авторизации
 authorize_client(p_id) {
-        static user[UserStruct];
+        new user[UserStruct];
         
         user = players_cache[p_id];     // Дублируем данные
         
@@ -345,7 +345,7 @@ authorize_client(p_id) {
 // Поддельный вход
 public authorize_client_fake(Array:handle, p_id) {
         change_status(p_id, AUTH_SUCCESS);
-        static user[UserStruct];
+        new user[UserStruct];
         
         array_read_user(handle, user);
         ArrayDestroy(handle);
@@ -368,7 +368,7 @@ public post_register_auth(u_id, p_id) {
 
 // Идентификация клиента
 public identify_client(Array:handle, p_id) {
-        static user[UserStruct];
+        new user[UserStruct];
         array_read_user(handle, user);
         
         ArrayDestroy(handle);
@@ -551,7 +551,7 @@ stock dump_userinfo(data[UserStruct], message[] = "") {
 }
 
 identify_mask(user[UserStruct], auth_mask) {
-        static defaults[UserStruct] = user_proto;
+        new defaults[UserStruct] = user_proto;
         
         if(auth_mask & ~AFLAG_NICK) 
                 copy(user[us_nickname], NICK_LENGTH, defaults[us_nickname]);
