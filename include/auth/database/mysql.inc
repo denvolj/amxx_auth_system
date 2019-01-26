@@ -335,9 +335,7 @@ stock any:mysql_exec(const sql_query[], thread_info[ThreadData], callback[] = "m
         database[sqld_tuple] = SQL_MakeDbTuple(db_host, db_username, db_password, db_database);
         
         // Дебажируем вывод :3
-        server_print("[MySQL] Query: %s", sql_query);
-        if(thread_info[useThread])
-                server_print("[MySQL] Using threading...");
+        logger(DEBUG_SQL, sql_query);
         
         if(thread_info[useThread]) {
                 SQL_ThreadQuery(database[sqld_tuple], callback, sql_query, thread_info, ThreadData);
