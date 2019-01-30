@@ -134,6 +134,7 @@ storage_find_user(data[UserStruct], thread_info[ThreadData] = thread_proto) {
         new temp[UserStruct];                           // Структура для хранения пользователя
         new where_clause[SQL_QLIM/2];                   // Уточнающая строка
         
+        dump_userinfo(data);
         // Строим уточнающую строку
         where_state(data, where_clause, " AND ");
         
@@ -260,6 +261,7 @@ public thread__storage_read(failstate, Handle:h_results, error[], errnum, thread
                         // Парсим результаты в массив
                         while(SQL_MoreResults(h_results)) {
 		                parse_results(h_results, temp);
+                                dump_userinfo(temp);
 		                ArrayPushArray(results, temp);
                                 SQL_NextRow(h_results);
 	                } 
@@ -323,7 +325,7 @@ public thread__storage_delete(failstate, Handle:h_results, error[], errnum, thre
 
 public thread__debug(failstate, Handle:query, error[], errnum, data[], size, Float:queuetime) {
         if(failstate != TQUERY_SUCCESS)    
-                server_print("[MySQL] SQL error [%d]: %s", errnum, error); 
+                logger(ERROR_SQL_FAILED, errnum, error);
 }
 
 /*==================================== Стоковые функции ====================================*/
@@ -336,6 +338,8 @@ stock any:mysql_exec(const sql_query[], thread_info[ThreadData], callback[] = "m
         
         // Дебажируем вывод :3
         logger(DEBUG_SQL, sql_query);
+        if(thread_info[useThread])
+                logger(DEBUG_SQL, "Using threading...");
         
         if(thread_info[useThread]) {
                 SQL_ThreadQuery(database[sqld_tuple], callback, sql_query, thread_info, ThreadData);
@@ -346,8 +350,7 @@ stock any:mysql_exec(const sql_query[], thread_info[ThreadData], callback[] = "m
                 new Handle:result = SQL_PrepareQuery(database[sqld_instance], sql_query);
                 
                 if(!SQL_Execute (result)) {
-                        SQL_QueryError(result, s_Error, charsmax(s_Error));
-                        server_print("[MySQL] SQL error: %s", s_Error);
+                        logger(ERROR_SQL_FAILED, SQL_QueryError(result, s_Error, charsmax(s_Error)), s_Error);
                 }
                 return result;
         }
@@ -359,7 +362,7 @@ stock any:mysql_exec(const sql_query[], thread_info[ThreadData], callback[] = "m
 
 // Унифицированный приемщик результатов, если нужно было только выполнить запрос
 public mysql_query_handler(failstate, Handle:query, error[], errnum, data[], size, Float:queuetime) {
-        if(failstate != TQUERY_SUCCESS)    server_print("[MySQL] SQL error [%d]: %s", errnum, error);
+        if(failstate != TQUERY_SUCCESS)    logger(DEBUG_SQL, error);
 }
 
 // Убийца всех хендлеров :3
@@ -490,3 +493,17 @@ where_state(const data[UserStruct], where_clause[SQL_QLIM/2], separator[]) {
                 flag = true; 
         }
 }
+
+/*
+CREATE TABLE `auth_system` (
+  `uid` int(10) unsigned NOT NULL AUTO_INCREMENT,
+  `nick` varchar(34) DEFAULT NULL,
+  `steam` varchar(32) DEFAULT NULL,
+  `ip` varchar(20) DEFAULT NULL,
+  `pass` varchar(70) DEFAULT NULL,
+  `auth_fail` int(3) unsigned DEFAULT '0',
+  `auth_flags` int(10) unsigned DEFAULT '0',
+  `flags` int(10) unsigned DEFAULT '0',
+  PRIMARY KEY (`uid`)
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8
+*/

@@ -38,12 +38,14 @@ enum _:SMessageCodes {
     INFO_CLIENT_LOGIN,
     INFO_STATUS_CHANGE,
     INFO_PARSING_CLIENT,
+    WARN_NATIVE_ARGPARSE_INVALID,
     DEBUG_EVENT_TRIGGERED,
     DEBUG_NATIVE_CALL,
     DEBUG_PARAM_STRING,
     DEBUG_PARAM_INT,
     DEBUG_PARAM_FLOAT,
     DEBUG_SQL,
+    ERROR_SQL_FAILED,
     ERROR_CALLBACK_NOT_FOUND
 };
 
@@ -58,12 +60,14 @@ new const MESSAGE_TABLE[SMessageCodes][SMessage] = {
     {INFO_CLIENT_LOGIN,             smm_info,       "%d :: %s has logged in."},
     {INFO_STATUS_CHANGE, smm_verb | smm_info,       "Status change: %d > %d"},
     {INFO_PARSING_CLIENT,smm_verb | smm_info,       "Parsing client data..."},
+    {WARN_NATIVE_ARGPARSE_INVALID,  smm_warn,       "Not valid key for use in parsing (key: %d)"},
     {DEBUG_EVENT_TRIGGERED,         smm_debug,      "Event %s(...)"},
     {DEBUG_NATIVE_CALL,             smm_debug,      "Native call %s(...) (caller id: %d)"},
     {DEBUG_PARAM_STRING, smm_verb | smm_debug,      "> (str) %s"},
     {DEBUG_PARAM_INT,    smm_verb | smm_debug,      "> (int) %d"},
     {DEBUG_PARAM_FLOAT,  smm_verb | smm_debug,      "> (float) %f"},
     {DEBUG_SQL,                     smm_debug,      "SQL: %s"},
+    {ERROR_SQL_FAILED,              smm_error,      "SQL error %d: %s"},
     {ERROR_CALLBACK_NOT_FOUND,      smm_error,      "Error! Callback %d::%s(...) not found"},
 };
 

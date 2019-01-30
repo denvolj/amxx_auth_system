@@ -6,10 +6,6 @@
     
     Система регистрации и авторизации.
     ToDo: 
-     - Возможность последовательного и параллельного обращения к БД
-     - Возможность работы с несколькими записями БД (результат оборачивать в array)
-     - Параллельное обращение реализовывать через последний строковый аргумент.
-       При отсутствии оного - использовать последовательную обработку.
      - Для действий с отсутствующими пользователями (например регистрация пользователя, 
        которого нет на сервере) использовать "виртуального" игрока с индексом 0.
 ============================================================================================*/
@@ -23,7 +19,7 @@
 
 /*===================================== Блок констант ======================================*/
 #define PLUG_OBJNAME            "AuthSystemCore"
-#define PLUG_VERSION            "1.1.6"
+#define PLUG_VERSION            "1.1.7"
 #define PLUG_CREATOR            "Boec[SpecOPs]"
 
 
@@ -393,21 +389,20 @@ authorize_client(p_id)
     user = players_cache[p_id];     // Дублируем данные
     
     identify_mask(user, auth_flag);
-    auth_getuser(AUTH_EXTRA, p_id, UserStruct, user, "identify_client");
-
     dump_userinfo(user);
+    auth_getuser(AUTH_EXTRA, p_id, UserStruct, user, "identify_client");
 }
 
 // Поддельный вход
 public authorize_client_fake(Array:handle, p_id) 
 {
     logger(INFO_CLIENT_FORCE_AUTH);
-    change_status(p_id, AUTH_SUCCESS);
     new user[UserStruct];
     
     array_read_user(handle, user);
     ArrayDestroy(handle);
     players_cache[p_id] = user;
+    change_status(p_id, AUTH_SUCCESS);
     dump_userinfo(user);
 }
 
@@ -423,10 +418,12 @@ public register_client(p_id)
     }
 }
 
-public post_register_auth(u_id, p_id) 
+// Хукаем событие завершения регистрации;
+// Инициируем процедуру авторизации
+public post_register_auth(Array:handle, p_id) 
 {
     logger(INFO_CLIENT_REGAUTH);
-    auth_getuser(AUTH_EXTRA, p_id, us_user_id, u_id, "identify_client");
+    authorize_client(p_id);
 }
 
 // Идентификация клиента
@@ -436,10 +433,11 @@ public identify_client(Array:handle, p_id)
     array_read_user(handle, user);
     
     ArrayDestroy(handle);
+    dump_userinfo(user);
     authenticate_client(user, p_id);
 }
 
-// процесс аутентификация клиента, вызывается при асинхронном запросе
+// процесс аутентификации клиента, вызывается при асинхронном запросе
 public authenticate_client(user[UserStruct], p_id) 
 {
     logger(INFO_CLIENT_AUTH);
@@ -500,8 +498,9 @@ unauthorize_client(p_id, due_disconnect=false)
     if(is_user_connected(p_id) && !due_disconnect) {
         players_cache[p_id] = user;
         change_status(p_id, AUTH_FAIL);
-    } else
+    } else {
         change_status(p_id, AUTH_EMPTY);
+    }
 }
 
 cache_passwd(p_id) 
@@ -551,16 +550,19 @@ parse_native_arguments(pluginID, args, user[UserStruct], thread_info[ThreadData]
         property = get_param_byref(++param);
 
         switch(property) {
-            case UserStruct: get_array(++param, user, UserStruct-1);
+            case UserStruct: get_array(++param, user, UserStruct);
             case us_nickname: get_string(++param, user[us_nickname], NICK_LENGTH-1);
             case us_steam: get_string(++param, user[us_steam], STEAM_LENGTH-1);
             case us_ip: get_string(++param, user[us_ip], IP_LENGTH-1);
             case us_password: get_string(++param, user[us_password], CACHE_LENGTH-1);
-            case us_authfail, us_authflags, us_accessflags: {
+            case us_authfail, us_authflags, us_accessflags, us_user_id: {
                 user[property] = get_param_byref(++param);
             }
             case AUTH_EXTRA: {
                 thread_info[TDInfoFlags] = get_param_byref(++param);
+            }
+            default: {
+                logger(WARN_NATIVE_ARGPARSE_INVALID, property);
             }
         }
         
@@ -586,7 +588,7 @@ parse_native_arguments(pluginID, args, user[UserStruct], thread_info[ThreadData]
             }
         }
                 
-    } while (param <= args);
+    } while (param < args);
     return;
 }
 
