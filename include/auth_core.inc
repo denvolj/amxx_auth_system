@@ -242,23 +242,25 @@ stock patch_struct(
         if(!equal(password, user_proto[us_password])) copy(dest[us_password], CACHE_LENGTH-1);
 }
                         
-stock array_read_user(Array:new_handle, user[UserStruct], new_index = -1) {
-        static Array:handle, index = 0, size = 1;
-        
+array_read_user(Array:new_handle, user[UserStruct], new_index = -1) {
+        static Array:old_handle, old_index = 0, old_size = 1;
         if(any:new_handle <= 0)
                 return false;
         
-        if(handle != new_handle) {
-                handle = new_handle;
-                size = ArraySize(handle);
-                index = new_index;
-                if(index == -1) index = 0;
+        old_size = ArraySize(new_handle);
+        
+        // Обновляем данные, если поступил новый массив
+        if(old_handle != new_handle) {
+                old_handle = new_handle;
+                old_index = new_index;
+                if(old_index == -1) old_index = 0;
         }
-        if(index >= size) return false;
+        if(old_index >= old_size) return false;
         
-        ArrayGetArray(handle, index, user, UserStruct-1);
+        ArrayGetArray(old_handle, old_index, user);
         
-        if(new_index == -1) index++; 
+        // Автоинкрементим индекс по умолчанию (для циклов)
+        if(new_index == -1) old_index++; 
         return true;
 }        
                         
