@@ -206,38 +206,6 @@ stock auth_equal(const data[UserStruct], field, comparewith[UserStruct] = user_p
     return false;
 }
 
-/* Метод для заполнения структуры
-* @usage patch_struct(user, temp_user);
-* @usage patch_struct(user, .user_id = 5, .nickname = "YoNickName", .accessflags = (1<<32));
-*/
-stock patch_struct(     
-        dest[UserStruct], 
-        const source[UserStruct] = user_proto,
-        nickname[MAX_NAME_LENGTH] = "",
-        steam[MAX_AUTHID_LENGTH] = "",
-        ip[MAX_IP_LENGTH] = "",
-        password[PASSWORD_HASH_LENGTH] = "",
-        authflags = AFLAG_NULL,
-        authfail = AFAIL_NULL,
-        authstatus = AUTH_EMPTY,
-        accessflags = 0) 
-{
-    // Сливаем переданную структуру (реализация копирования)
-    copy(dest, UserStruct-1, source);
-    
-    // Сравниваем значения со значениями по умолчанию, не стандарт - сливаем в структуру
-    if(user_id != user_proto[us_user_id])       dest[us_user_id]     = user_id;
-    if(authflags != user_proto[us_authflags])       dest[us_authflags]   = authflags;
-    if(authfail != user_proto[us_authfail])     dest[us_authfail]    = authfail;
-    if(authstatus != user_proto[us_authstatus])     dest[us_authstatus]  = authstatus;
-    if(accessflags != user_proto[us_accessflags])   dest[us_accessflags] = accessflags;
-    
-    // Строковые сравнения
-    if(!equal(nickname, user_proto[us_nickname])) copy(dest[us_nickname], MAX_NAME_LENGTH-1);
-    if(!equal(steam, user_proto[us_steam]))       copy(dest[us_steam], MAX_AUTHID_LENGTH-1);
-    if(!equal(ip, user_proto[us_ip]))         copy(dest[us_ip], MAX_IP_LENGTH-1);
-    if(!equal(password, user_proto[us_password])) copy(dest[us_password], PASSWORD_HASH_LENGTH-1);
-}
 
 // Хендл -1 обозначает, что мы используем предыдущий хендл. Индекс -1 обозначает, что мы действуем инкрементально.
 stock array_read_user(user[UserStruct], Array:new_handle = -1, new_index = -1) {

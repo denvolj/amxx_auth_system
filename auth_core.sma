@@ -5,25 +5,19 @@
     ---------------------------------
     
     Система регистрации и авторизации.
-    ToDo: 
-     - Использовать предопределённые константы (например, MAX_NAME_LENGTH)
-     - Для действий с отсутствующими пользователями (например регистрация пользователя, 
-       которого нет на сервере) использовать "виртуального" игрока с индексом 0.
-     - Перенести разбор данных об игроке на более позднюю стадию (когда все параметры будут готовы)
-     - INFO_CLIENT_AUTH используется два раза, отчего не ясно что происходит.
+
 ============================================================================================*/
 
 #pragma semicolon 1;
 
 #include <amxmodx>
-#include <amxconst>
 #include <auth_core>
 #include <auth/logger>
 #include <auth/database/mysql>
 
 /*===================================== Блок констант ======================================*/
 #define PLUG_OBJNAME            "AuthSystemCore"
-#define PLUG_VERSION            "1.1.8"
+#define PLUG_VERSION            "1.1.10"
 #define PLUG_CREATOR            "Boec[SpecOPs]"
 
 
@@ -251,7 +245,7 @@ public native__get_playerinfo(pluginID, args)
     p_id = get_param_byref(1);
     logger(DEBUG_PARAM_INT, p_id);
     
-    set_array(2, players_cache[p_id], UserStruct);
+    set_array(2, players_cache[p_id], sizeof(players_cache[]));
 }
 
 
@@ -376,10 +370,10 @@ parse_client_data(p_id)
 {
     logger(INFO_PARSING_CLIENT);
 
-    get_user_name(p_id, players_cache[p_id][us_nickname], MAX_NAME_LENGTH); 
-    get_user_authid(p_id, players_cache[p_id][us_steam], MAX_AUTHID_LENGTH);
-    get_user_ip(p_id, players_cache[p_id][us_ip], MAX_IP_LENGTH, true);
-    get_user_info(p_id, pass_key, players_cache[p_id][us_password], PASSWORD_HASH_LENGTH);
+    get_user_name(p_id, players_cache[p_id][us_nickname], charsmax(players_cache[][us_nickname])); 
+    get_user_authid(p_id, players_cache[p_id][us_steam], charsmax(players_cache[][us_steam]));
+    get_user_ip(p_id, players_cache[p_id][us_ip], charsmax(players_cache[][us_ip]), true);
+    get_user_info(p_id, pass_key, players_cache[p_id][us_password], charsmax(players_cache[][us_password]));
     cache_passwd(p_id);
 
     dump_userinfo(players_cache[p_id]);
@@ -512,11 +506,11 @@ unauthorize_client(p_id, due_disconnect=false)
 cache_passwd(p_id) 
 {
     new passwd[PASSWORD_HASH_LENGTH];
-    copy(passwd, PASSWORD_HASH_LENGTH-1, players_cache[p_id][us_password]);
+    copy(passwd, charsmax(passwd), players_cache[p_id][us_password]);
     
     cache_string(passwd, sault_cache);
     
-    copy(players_cache[p_id][us_password], PASSWORD_HASH_LENGTH-1, passwd);
+    copy(players_cache[p_id][us_password], charsmax(passwd), passwd);
 }
 
 change_status(p_id, status) 
@@ -556,11 +550,11 @@ parse_native_arguments(pluginID, args, user[UserStruct], thread_info[ThreadData]
         property = get_param_byref(++param);
 
         switch(property) {
-            case UserStruct: get_array(++param, user, UserStruct);
-            case us_nickname: get_string(++param, user[us_nickname], MAX_NAME_LENGTH-1);
-            case us_steam: get_string(++param, user[us_steam], MAX_AUTHID_LENGTH-1);
-            case us_ip: get_string(++param, user[us_ip], MAX_IP_LENGTH-1);
-            case us_password: get_string(++param, user[us_password], PASSWORD_HASH_LENGTH-1);
+            case UserStruct: get_array(++param, user, sizeof(user));
+            case us_nickname: get_string(++param, user[us_nickname], charsmax(user[us_nickname]));
+            case us_steam: get_string(++param, user[us_steam], charsmax(user[us_steam]));
+            case us_ip: get_string(++param, user[us_ip], charsmax(user[us_ip]));
+            case us_password: get_string(++param, user[us_password], charsmax(user[us_password]));
             case us_authfail, us_authflags, us_accessflags, us_user_id: {
                 user[property] = get_param_byref(++param);
             }
@@ -616,11 +610,11 @@ identify_mask(user[UserStruct], auth_mask)
     new defaults[UserStruct] = user_proto;
 
     if(auth_mask & ~AFLAG_NICK) 
-        copy(user[us_nickname], MAX_NAME_LENGTH, defaults[us_nickname]);
+        copy(user[us_nickname], charsmax(user[us_nickname]), defaults[us_nickname]);
     if(auth_mask & ~AFLAG_STEAM) 
-        copy(user[us_steam], MAX_AUTHID_LENGTH, defaults[us_steam]);
+        copy(user[us_steam], charsmax(user[us_steam]), defaults[us_steam]);
     if(auth_mask & ~AFLAG_IP) 
-        copy(user[us_ip], MAX_IP_LENGTH, defaults[us_ip]);
+        copy(user[us_ip], charsmax(user[us_ip]), defaults[us_ip]);
     if(auth_mask & ~AFLAG_PASS) 
-        copy(user[us_password], PASSWORD_HASH_LENGTH, defaults[us_password]);
+        copy(user[us_password], charsmax(user[us_password]), defaults[us_password]);
 }
