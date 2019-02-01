@@ -31,6 +31,7 @@ enum _:SMessageCodes {
     MESSAGE_OK = 0,
     INFO_PLUGIN_INIT,
     INFO_PLUGIN_CFG,
+    INFO_CLIENT_PARSE,
     INFO_CLIENT_AUTH,
     INFO_CLIENT_REGISTER,
     INFO_CLIENT_FORCE_AUTH,
@@ -53,6 +54,7 @@ new const MESSAGE_TABLE[SMessageCodes][SMessage] = {
     {MESSAGE_OK,                    smm_info,       "All OK. No errors >:3"},
     {INFO_PLUGIN_INIT,              smm_info,       "Plugin initialization..."},
     {INFO_PLUGIN_CFG,               smm_info,       "Loading configuration..."},
+    {INFO_CLIENT_PARSE,              smm_info,      "Parsing client information..."},
     {INFO_CLIENT_AUTH,              smm_info,       "Authorizing client..."},
     {INFO_CLIENT_REGISTER,          smm_info,       "Registering client..."},
     {INFO_CLIENT_FORCE_AUTH,        smm_info,       "Force auth client..."},
@@ -81,6 +83,7 @@ stock get_plugin_name()
     return name;
 }
 
+
 stock logger(message_code, any:...) 
 {
     new message[256], msg_format[128];
@@ -106,4 +109,22 @@ stock logger(message_code, any:...)
         }
     }
     return;
+}
+
+stock dump_userinfo(data[UserStruct], message[] = "") 
+{
+    if (!(__loglevel & ~(smm_verb | smm_debug))) {
+        return;
+    }
+								
+    server_print("Dumping user data %s", message);
+    server_print("> user_id:     %d", data[us_user_id]);
+    server_print("> nickname:    %s", data[us_nickname]);
+    server_print("> steam:       %s", data[us_steam]);
+    server_print("> ip:          %s", data[us_ip]);
+    server_print("> password:    %s", data[us_password]);
+    server_print("> authfail:    %d", data[us_authfail]);
+    server_print("> authflags:   %d", data[us_authflags]);
+    server_print("> authstatus:  %d", data[us_authstatus]);
+    server_print("> accessflags: %d", data[us_accessflags]);
 }

@@ -58,7 +58,7 @@ storage_init() {
         new thread_info[ThreadData] = thread_proto;
         thread_info[useThread] = true;
         
-        format(query, SQL_QLIM-1, __AUTH_CREATE, NICK_LENGTH, STEAM_LENGTH, IP_LENGTH, CACHE_LENGTH);
+        format(query, SQL_QLIM-1, __AUTH_CREATE, MAX_NAME_LENGTH, MAX_AUTHID_LENGTH, MAX_IP_LENGTH, PASSWORD_HASH_LENGTH);
         return mysql_exec(query, thread_info);
 }
 // user, thread_info
@@ -395,10 +395,10 @@ parse_results(Handle:sql_results, data[UserStruct]) {
 	new parsed = 0;
 	
 	data[us_user_id] = SQL_ReadResult(sql_results, parsed++);
-	SQL_ReadResult(sql_results, parsed++, data[us_nickname], NICK_LENGTH);
-	SQL_ReadResult(sql_results, parsed++, data[us_steam], STEAM_LENGTH);
-	SQL_ReadResult(sql_results, parsed++, data[us_ip], IP_LENGTH);
-	SQL_ReadResult(sql_results, parsed++, data[us_password], CACHE_LENGTH);
+	SQL_ReadResult(sql_results, parsed++, data[us_nickname], MAX_NAME_LENGTH);
+	SQL_ReadResult(sql_results, parsed++, data[us_steam], MAX_AUTHID_LENGTH);
+	SQL_ReadResult(sql_results, parsed++, data[us_ip], MAX_IP_LENGTH);
+	SQL_ReadResult(sql_results, parsed++, data[us_password], PASSWORD_HASH_LENGTH);
 	data[us_authfail] = _:SQL_ReadResult(sql_results, parsed++);
 	data[us_authflags] = _:SQL_ReadResult(sql_results, parsed++);
 	data[us_accessflags] = _:SQL_ReadResult(sql_results, parsed++);
@@ -406,17 +406,17 @@ parse_results(Handle:sql_results, data[UserStruct]) {
 
 // Копируем структуру и экранируем её строки
 screen_object(const source[UserStruct], destination[UserStruct]) {
-        mysql_escape_string(destination[us_nickname], NICK_LENGTH-1, source[us_nickname]);
-        format(destination[us_nickname], NICK_LENGTH-1, "'%s'", destination[us_nickname]);
+        mysql_escape_string(destination[us_nickname], MAX_NAME_LENGTH-1, source[us_nickname]);
+        format(destination[us_nickname], MAX_NAME_LENGTH-1, "'%s'", destination[us_nickname]);
         
-        mysql_escape_string(destination[us_steam], STEAM_LENGTH-1, source[us_steam]);
-        format(destination[us_steam], STEAM_LENGTH-1, "'%s'", destination[us_steam]);
+        mysql_escape_string(destination[us_steam], MAX_AUTHID_LENGTH-1, source[us_steam]);
+        format(destination[us_steam], MAX_AUTHID_LENGTH-1, "'%s'", destination[us_steam]);
         
-        mysql_escape_string(destination[us_password], CACHE_LENGTH-1, source[us_password]);
-        format(destination[us_password], CACHE_LENGTH-1, "'%s'", destination[us_password]);
+        mysql_escape_string(destination[us_password], PASSWORD_HASH_LENGTH-1, source[us_password]);
+        format(destination[us_password], PASSWORD_HASH_LENGTH-1, "'%s'", destination[us_password]);
         
-        mysql_escape_string(destination[us_ip], IP_LENGTH-1, source[us_ip]);
-        format(destination[us_ip], IP_LENGTH-1, "'%s'", destination[us_ip]);
+        mysql_escape_string(destination[us_ip], MAX_IP_LENGTH-1, source[us_ip]);
+        format(destination[us_ip], MAX_IP_LENGTH-1, "'%s'", destination[us_ip]);
         destination[us_authflags] = source[us_authflags];
         destination[us_accessflags] = source[us_accessflags];
         destination[us_authfail] = source[us_authfail];

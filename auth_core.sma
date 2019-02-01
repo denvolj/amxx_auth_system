@@ -6,20 +6,24 @@
     
     Система регистрации и авторизации.
     ToDo: 
+     - Использовать предопределённые константы (например, MAX_NAME_LENGTH)
      - Для действий с отсутствующими пользователями (например регистрация пользователя, 
        которого нет на сервере) использовать "виртуального" игрока с индексом 0.
+     - Перенести разбор данных об игроке на более позднюю стадию (когда все параметры будут готовы)
+     - INFO_CLIENT_AUTH используется два раза, отчего не ясно что происходит.
 ============================================================================================*/
 
 #pragma semicolon 1;
 
 #include <amxmodx>
+#include <amxconst>
 #include <auth_core>
 #include <auth/logger>
 #include <auth/database/mysql>
 
 /*===================================== Блок констант ======================================*/
 #define PLUG_OBJNAME            "AuthSystemCore"
-#define PLUG_VERSION            "1.1.7"
+#define PLUG_VERSION            "1.1.8"
 #define PLUG_CREATOR            "Boec[SpecOPs]"
 
 
@@ -29,7 +33,7 @@ new players_cache[33][UserStruct];              // Кеш пользовател
 
 new auth_flag;                                  // Флаг идентификации
 new pass_key[5] = "_pw";                        // Поле пароля из user info
-new sault_cache[CACHE_LENGTH];                  // Соль безопасности для хеширования
+new sault_cache[PASSWORD_HASH_LENGTH];                  // Соль безопасности для хеширования
 
 new cvar_authflag, cvar_sault;
 
@@ -57,7 +61,7 @@ public plugin_cfg()
     new flags[4];
     
     // Читаем квары
-    get_pcvar_string(cvar_sault, sault_cache, CACHE_LENGTH-1);
+    get_pcvar_string(cvar_sault, sault_cache, PASSWORD_HASH_LENGTH-1);
     get_pcvar_string(cvar_authflag, flags, 3);
         
     // Покупаем соль для хеширования
@@ -329,7 +333,9 @@ public client_connect(p_id)
 {
     logger(DEBUG_EVENT_TRIGGERED, "client_connect");
     logger(DEBUG_PARAM_INT, p_id);
-    parse_client_data(p_id);        // Получаем данные игрока
+
+    new user[UserStruct] = user_proto;
+    players_cache[p_id] = user;
 }
 
 public client_putinserver(p_id) 
@@ -347,6 +353,8 @@ public client_authorized(p_id)
 {
     logger(DEBUG_EVENT_TRIGGERED, "client_authorized");
     logger(DEBUG_PARAM_INT, p_id);
+    change_status(p_id, AUTH_EMPTY);
+
     if(!is_user_connected(p_id)){
         // Ожидаем, пока клиент подключится 
         return;
@@ -368,14 +376,11 @@ parse_client_data(p_id)
 {
     logger(INFO_PARSING_CLIENT);
 
-    new user[UserStruct] = user_proto;
-    players_cache[p_id] = user;
-    get_user_name(p_id, players_cache[p_id][us_nickname], NICK_LENGTH); 
-    get_user_authid(p_id, players_cache[p_id][us_steam], STEAM_LENGTH);
-    get_user_ip(p_id, players_cache[p_id][us_ip], IP_LENGTH, true);
-    get_user_info(p_id, pass_key, players_cache[p_id][us_password], CACHE_LENGTH);
+    get_user_name(p_id, players_cache[p_id][us_nickname], MAX_NAME_LENGTH); 
+    get_user_authid(p_id, players_cache[p_id][us_steam], MAX_AUTHID_LENGTH);
+    get_user_ip(p_id, players_cache[p_id][us_ip], MAX_IP_LENGTH, true);
+    get_user_info(p_id, pass_key, players_cache[p_id][us_password], PASSWORD_HASH_LENGTH);
     cache_passwd(p_id);
-    players_cache[p_id][us_authstatus] = _:AUTH_EMPTY;
 
     dump_userinfo(players_cache[p_id]);
 }
@@ -383,8 +388,8 @@ parse_client_data(p_id)
 // Старт процедуры авторизации
 authorize_client(p_id) 
 {
-    logger(INFO_CLIENT_AUTH);
     new user[UserStruct];
+    parse_client_data(p_id);        // Получаем данные игрока
     
     user = players_cache[p_id];     // Дублируем данные
     
@@ -399,7 +404,7 @@ public authorize_client_fake(Array:handle, p_id)
     logger(INFO_CLIENT_FORCE_AUTH);
     new user[UserStruct];
     
-    array_read_user(handle, user);
+    array_read_user(user, handle, 0);
     ArrayDestroy(handle);
     players_cache[p_id] = user;
     change_status(p_id, AUTH_SUCCESS);
@@ -430,7 +435,7 @@ public post_register_auth(Array:handle, p_id)
 public identify_client(Array:handle, p_id) 
 {
     new user[UserStruct];
-    array_read_user(handle, user);
+    array_read_user(user, handle, 0);
     
     ArrayDestroy(handle);
     dump_userinfo(user);
@@ -476,6 +481,11 @@ public authenticate_client(user[UserStruct], p_id)
     // Проверки пройдены,
     // Плагины разрешили пользователю пройти авторизацию
     // Сохраняем пользователю структуру и выдаем его номер
+
+    user[us_authfail] = players_cache[p_id][us_authfail];
+    user[us_authflags] = players_cache[p_id][us_authflags];
+    user[us_authstatus] = players_cache[p_id][us_authstatus];
+    user[us_accessflags] = players_cache[p_id][us_accessflags];
     players_cache[p_id] = user;
     if(change_status(p_id, AUTH_SUCCESS) == AUTH_CONTINUE && auth_success) { 
         logger(INFO_CLIENT_LOGIN, players_cache[p_id][us_user_id], players_cache[p_id][us_nickname]);
@@ -492,25 +502,21 @@ public authenticate_client(user[UserStruct], p_id)
 
 unauthorize_client(p_id, due_disconnect=false)
 {
-    new user[UserStruct] = user_proto;
-    user[us_authstatus]= players_cache[p_id][us_authstatus];
-
     if(is_user_connected(p_id) && !due_disconnect) {
-        players_cache[p_id] = user;
         change_status(p_id, AUTH_FAIL);
     } else {
-        change_status(p_id, AUTH_EMPTY);
+        change_status(p_id, AUTH_NULL);
     }
 }
 
 cache_passwd(p_id) 
 {
-    new passwd[CACHE_LENGTH];
-    copy(passwd, CACHE_LENGTH-1, players_cache[p_id][us_password]);
+    new passwd[PASSWORD_HASH_LENGTH];
+    copy(passwd, PASSWORD_HASH_LENGTH-1, players_cache[p_id][us_password]);
     
     cache_string(passwd, sault_cache);
     
-    copy(players_cache[p_id][us_password], CACHE_LENGTH-1, passwd);
+    copy(players_cache[p_id][us_password], PASSWORD_HASH_LENGTH-1, passwd);
 }
 
 change_status(p_id, status) 
@@ -551,10 +557,10 @@ parse_native_arguments(pluginID, args, user[UserStruct], thread_info[ThreadData]
 
         switch(property) {
             case UserStruct: get_array(++param, user, UserStruct);
-            case us_nickname: get_string(++param, user[us_nickname], NICK_LENGTH-1);
-            case us_steam: get_string(++param, user[us_steam], STEAM_LENGTH-1);
-            case us_ip: get_string(++param, user[us_ip], IP_LENGTH-1);
-            case us_password: get_string(++param, user[us_password], CACHE_LENGTH-1);
+            case us_nickname: get_string(++param, user[us_nickname], MAX_NAME_LENGTH-1);
+            case us_steam: get_string(++param, user[us_steam], MAX_AUTHID_LENGTH-1);
+            case us_ip: get_string(++param, user[us_ip], MAX_IP_LENGTH-1);
+            case us_password: get_string(++param, user[us_password], PASSWORD_HASH_LENGTH-1);
             case us_authfail, us_authflags, us_accessflags, us_user_id: {
                 user[property] = get_param_byref(++param);
             }
@@ -595,31 +601,14 @@ parse_native_arguments(pluginID, args, user[UserStruct], thread_info[ThreadData]
 // Спецзаказ: выдержанная в соли кешированная строка
 cache_string(text[], const sault[]) 
 {
-    static string[CACHE_LENGTH]; copy(string, CACHE_LENGTH-1, text);
-    static buffer[CACHE_LENGTH+2]; 
-    formatex(buffer, CACHE_LENGTH+2, "%s%s", text, sault);
-    static cached_string[CACHE_LENGTH];
+    static string[PASSWORD_HASH_LENGTH]; copy(string, PASSWORD_HASH_LENGTH-1, text);
+    static buffer[PASSWORD_HASH_LENGTH+2]; 
+    formatex(buffer, PASSWORD_HASH_LENGTH+2, "%s%s", text, sault);
+    static cached_string[PASSWORD_HASH_LENGTH];
 
-    hash_string(buffer, Hash_Sha3_256, cached_string, CACHE_LENGTH-1);
+    hash_string(buffer, Hash_Sha3_256, cached_string, PASSWORD_HASH_LENGTH-1);
 
-    copy(text, CACHE_LENGTH-1, cached_string);
-}
-
-stock dump_userinfo(data[UserStruct], message[] = "") 
-{
-    if (!(__loglevel & ~(smm_verb | smm_debug))) {
-        return;
-    }
-    server_print("Dumping user data %s", message);
-    server_print("> user_id:     %d", data[us_user_id]);
-    server_print("> nickname:    %s", data[us_nickname]);
-    server_print("> steam:       %s", data[us_steam]);
-    server_print("> ip:          %s", data[us_ip]);
-    server_print("> password:    %s", data[us_password]);
-    server_print("> authfail:    %d", data[us_authfail]);
-    server_print("> authflags:   %d", data[us_authflags]);
-    server_print("> authstatus:  %d", data[us_authstatus]);
-    server_print("> accessflags: %d", data[us_accessflags]);
+    copy(text, PASSWORD_HASH_LENGTH-1, cached_string);
 }
 
 identify_mask(user[UserStruct], auth_mask) 
@@ -627,11 +616,11 @@ identify_mask(user[UserStruct], auth_mask)
     new defaults[UserStruct] = user_proto;
 
     if(auth_mask & ~AFLAG_NICK) 
-        copy(user[us_nickname], NICK_LENGTH, defaults[us_nickname]);
+        copy(user[us_nickname], MAX_NAME_LENGTH, defaults[us_nickname]);
     if(auth_mask & ~AFLAG_STEAM) 
-        copy(user[us_steam], STEAM_LENGTH, defaults[us_steam]);
+        copy(user[us_steam], MAX_AUTHID_LENGTH, defaults[us_steam]);
     if(auth_mask & ~AFLAG_IP) 
-        copy(user[us_ip], IP_LENGTH, defaults[us_ip]);
+        copy(user[us_ip], MAX_IP_LENGTH, defaults[us_ip]);
     if(auth_mask & ~AFLAG_PASS) 
-        copy(user[us_password], CACHE_LENGTH, defaults[us_password]);
+        copy(user[us_password], PASSWORD_HASH_LENGTH, defaults[us_password]);
 }
